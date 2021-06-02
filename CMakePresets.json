@@ -1,0 +1,92 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release-vcpkg",
+      "displayName": "Release Config",
+      "description": "Release build using Ninja generator",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-vcpkg",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "POORPROF_DEPS": "vcpkg"
+      },
+      "environment": {
+      }
+    },
+    {
+      "name": "release-conan",
+      "displayName": "Release Config",
+      "description": "Release build using Ninja generator",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-conan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "POORPROF_DEPS": "conan"
+      },
+      "environment": {
+      }
+    },
+    {
+      "name": "debug-conan",
+      "displayName": "Debug Config",
+      "description": "Debug build using Ninja generator",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-conan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "POORPROF_DEPS": "conan"
+      },
+      "environment": {
+      }
+    },
+    {
+      "name": "release-system",
+      "displayName": "Release Config",
+      "description": "Release build using Ninja generator",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "POORPROF_DEPS": "system"
+      },
+      "environment": {
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release-vcpkg",
+      "configurePreset": "release-vcpkg",
+      "displayName": "Release Config",
+      "description": "Release build using Ninja generator"
+    },
+    {
+      "name": "release-conan",
+      "configurePreset": "release-conan",
+      "displayName": "Release Config",
+      "description": "Release build using Ninja generator"
+    },
+    {
+      "name": "debug-conan",
+      "configurePreset": "debug-conan",
+      "displayName": "Debug Config",
+      "description": "Debug build using Ninja generator"
+    },
+    {
+      "name": "release-system",
+      "configurePreset": "release-system",
+      "displayName": "Release Config",
+      "description": "Release build using Ninja generator"
+    }
+  ]
+}
