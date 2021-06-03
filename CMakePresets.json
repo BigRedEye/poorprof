@@ -9,13 +9,14 @@
     {
       "name": "release-vcpkg",
       "displayName": "Release Config",
-      "description": "Release build using Ninja generator",
-      "generator": "Ninja",
+      "description": "Release build using Unix Makefiles generator",
+      "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/release-vcpkg",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "vcpkg"
+        "POORPROF_DEPS": "vcpkg",
+        "FORCE_COLORED_OUTPUT": true
       },
       "environment": {
       }
@@ -23,13 +24,31 @@
     {
       "name": "release-conan",
       "displayName": "Release Config",
-      "description": "Release build using Ninja generator",
-      "generator": "Ninja",
+      "description": "Release build using Unix Makefiles generator",
+      "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/release-conan",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "conan"
+        "POORPROF_DEPS": "conan",
+        "FORCE_COLORED_OUTPUT": true
+      },
+      "environment": {
+      }
+    },
+    {
+      "name": "release-conan-musl",
+      "displayName": "Release Config",
+      "description": "Release build using Unix Makefiles generator",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/release-conan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "POORPROF_DEPS": "conan",
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_STATIC_LIBSTDCXX": true,
+        "POORPROF_STATIC_LIBC": true
       },
       "environment": {
       }
@@ -37,13 +56,14 @@
     {
       "name": "debug-conan",
       "displayName": "Debug Config",
-      "description": "Debug build using Ninja generator",
-      "generator": "Ninja",
+      "description": "Debug build using Unix Makefiles generator",
+      "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/debug-conan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "conan"
+        "POORPROF_DEPS": "conan",
+        "FORCE_COLORED_OUTPUT": true
       },
       "environment": {
       }
@@ -51,13 +71,14 @@
     {
       "name": "release-system",
       "displayName": "Release Config",
-      "description": "Release build using Ninja generator",
-      "generator": "Ninja",
+      "description": "Release build using Unix Makefiles generator",
+      "generator": "Unix Makefiles",
       "binaryDir": "${sourceDir}/build/release-system",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "system"
+        "POORPROF_DEPS": "system",
+        "FORCE_COLORED_OUTPUT": true
       },
       "environment": {
       }
@@ -68,25 +89,31 @@
       "name": "release-vcpkg",
       "configurePreset": "release-vcpkg",
       "displayName": "Release Config",
-      "description": "Release build using Ninja generator"
+      "description": "Release build using Unix Makefiles generator"
     },
     {
       "name": "release-conan",
       "configurePreset": "release-conan",
       "displayName": "Release Config",
-      "description": "Release build using Ninja generator"
+      "description": "Release build using Unix Makefiles generator"
+    },
+    {
+      "name": "release-conan-musl",
+      "configurePreset": "release-conan-musl",
+      "displayName": "Release Config",
+      "description": "Release build using Unix Makefiles generator"
     },
     {
       "name": "debug-conan",
       "configurePreset": "debug-conan",
       "displayName": "Debug Config",
-      "description": "Debug build using Ninja generator"
+      "description": "Debug build using Unix Makefiles generator"
     },
     {
       "name": "release-system",
       "configurePreset": "release-system",
       "displayName": "Release Config",
-      "description": "Release build using Ninja generator"
+      "description": "Release build using Unix Makefiles generator"
     }
   ]
 }

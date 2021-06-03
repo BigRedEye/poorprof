@@ -4,7 +4,7 @@ class PoorProfConan(ConanFile):
     settings = "os", "compiler", "build_type", "arch"
     generators = "cmake", "gcc", "txt"
 
-    requires = "fmt/7.1.3", "elfutils/0.180", "spdlog/1.8.5"
+    requires = "fmt/7.1.3", "elfutils/0.180", "spdlog/1.8.5", "abseil/20210324.1"
 
     options = {
         "pkg": "ANY",
