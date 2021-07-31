@@ -547,7 +547,7 @@ private:
 
         SourceLocation location;
         if (lastScope) {
-            Dwarf_Files *files = nullptr;
+            Dwarf_Files* files = nullptr;
             if (dwarf_getsrcfiles(cudie, &files, NULL) == 0) {
                 Dwarf_Attribute attr;
                 Dwarf_Word val = 0;
