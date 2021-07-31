@@ -352,8 +352,8 @@ public:
     }
 
     void Unwind() override {
-        dwfl_getthreads(Dwfl_, +[](Dwfl_Thread* thread, void* arg) -> int {
-            static_cast<Unwinder*>(arg)->HandleThread(thread);
+        dwfl_getthreads(Dwfl_, +[](Dwfl_Thread* thread, void* that) -> int {
+            static_cast<Unwinder*>(that)->HandleThread(thread);
             return DWARF_CB_OK;
         }, this);
     }
@@ -383,7 +383,9 @@ private:
         int err = dwfl_thread_getframes(thread, +[](Dwfl_Frame* raw, void* arg) -> int {
             FrameList* frames = static_cast<FrameList*>(arg);
             Frame& frame = frames->emplace_back();
-            dwfl_frame_pc(raw, &frame.InstructionPointer, &frame.IsActivation);
+            if (!dwfl_frame_pc(raw, &frame.InstructionPointer, &frame.IsActivation)) {
+                return -1;
+            }
             return DWARF_CB_OK;
         }, &frames);
 
@@ -392,8 +394,10 @@ private:
             if (strcmp(dwfl_errmsg(errn), "No such process") == 0) {
                 return;
             }
-            spdlog::error("Failed to get thread frames: {}", dwfl_errmsg(errn));
-            return;
+            if (frames.empty()) {
+                spdlog::error("TID {}: Failed to get thread frames: {}", tid, dwfl_errmsg(errn));
+                return;
+            }
         }
 
         spdlog::debug("Thread {} of process {}", tid, Pid_);
@@ -473,17 +477,22 @@ private:
 
         Dwarf_Addr offset = 0;
         Dwarf_Die* comilationUnitDebugInfoElement = dwfl_module_addrdie(module, frame.InstructionPointerAdjusted(), &offset);
+        spdlog::debug("Found DIE {:x} for rip {:x} with bias {}", (uintptr_t)comilationUnitDebugInfoElement, frame.InstructionPointerAdjusted(), offset);
 
         Dwarf_Die* scopes = nullptr;
         int numScopes = dwarf_getscopes(comilationUnitDebugInfoElement, frame.InstructionPointerAdjusted() - offset, &scopes);
+        /*
+        if (numScopes == -1) {
+            throw DwflError{};
+        }
+        */
+
         DEFER {
             ::free(scopes);
         };
 
         const char* firstSymbolName = nullptr;
         if (numScopes > 0) {
-            spdlog::debug("Found {} scopes", numScopes);
-
             for (Dwarf_Die* scope = scopes; scope < scopes + numScopes; ++scope) {
                 if (IsInlinedScope(scope)) {
                     firstSymbolName = TryGetDebugInfoElementLinkageName(scope);
@@ -500,11 +509,17 @@ private:
             firstSymbolName = dwfl_module_addrname(module, frame.InstructionPointerAdjusted());
         }
 
+        spdlog::debug("Found {} scopes for symbol {}", numScopes, cxx::abi::Demangle(firstSymbolName));
+
         SymbolList symbols;
         symbols.push_back(FillSymbol(frame, module, firstSymbolName, nullptr, nullptr, false));
         if (debugInfoElement) {
             Dwarf_Die* scopes = nullptr;
             int numInlinedSymbols = dwarf_getscopes_die(&*debugInfoElement, &scopes);
+            if (numInlinedSymbols == -1) {
+                throw DwflError{};
+            }
+
             DEFER {
                 ::free(scopes);
             };
@@ -536,6 +551,9 @@ private:
 
         if (name) {
             sym.Name = cxx::abi::Demangle(name);
+            spdlog::debug("Start resolve frame {}, inlined: {}", *sym.Name, inlined);
+        } else {
+            sym.Name = "??";
         }
 
         {
@@ -560,14 +578,28 @@ private:
                         }
                     }
                 }
+            } else {
+                location.File = "<<dwarf_getsrcfiles>>";
             }
         } else {
+            location.File = "<<no last scope>>";
             Dwfl_Line* line = dwfl_module_getsrc(module, frame.InstructionPointerAdjusted());
+            if (line == nullptr) {
+                spdlog::warn("No line found using dwfl_module_getsrc, name: {}", name);
+                line = dwfl_getsrc(Dwfl_, frame.InstructionPointerAdjusted());
+            }
+
+            if (line == nullptr) {
+                spdlog::warn("No line found using dwfl_getsrc, name: {}", name);
+            }
+
             if (line) {
                 const char* name = dwfl_lineinfo(line, nullptr, &location.Line, &location.Column, nullptr, nullptr);
                 if (name) {
                     location.File = name;
                 }
+            } else {
+                location.File += ", <<no line>>";
             }
         }
 
@@ -701,6 +733,8 @@ Options ParseOptions(int argc, const char* argv[]) {
 int Main(int argc, const char* argv[]) {
     spdlog::set_level(spdlog::level::info);
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
+    spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f [%^%l%$] %v");
+
     util::ctrlc::HandleSigInt(3);
 
     Options options = ParseOptions(argc, argv);
@@ -724,6 +758,8 @@ int Main(int argc, const char* argv[]) {
         }
 
         std::this_thread::sleep_until(start + sleep_delta);
+
+        break;
     }
     spdlog::info("Stopped by SIGINT");
 
