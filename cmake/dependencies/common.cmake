@@ -16,3 +16,7 @@ if(NOT cpparg_POPULATED)
 endif()
 
 list(APPEND POORPROF_PRIVATE_LIBRARIES cpparg::cpparg)
+
+### threads ###
+find_package(Threads REQUIRED)
+list(APPEND POORPROF_PUBLIC_LIBRARIES Threads::Threads)
