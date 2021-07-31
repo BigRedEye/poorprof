@@ -1,10 +1,21 @@
 #include <cpparg/cpparg.h>
 
-#include <fmt/format.h>
 #include <fmt/chrono.h>
+#include <fmt/format.h>
 
-#include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
+#include <absl/hash/hash.h>
+
+#include <dwarf.h>
+#include <elfutils/libdw.h>
+#include <elfutils/libdwelf.h>
+#include <elfutils/libdwfl.h>
+
+#include <sys/types.h>
 
 #include <chrono>
 #include <compare>
@@ -13,22 +24,12 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <utility>
 #include <thread>
-
-#include <absl/container/inlined_vector.h>
-#include <absl/container/flat_hash_map.h>
-#include <absl/hash/hash.h>
-
-#include <elfutils/libdwfl.h>
-#include <elfutils/libdw.h>
-#include <elfutils/libdwelf.h>
-#include <dwarf.h>
-
-#include <sys/types.h>
+#include <utility>
 
 /// UTIL
 namespace util {
@@ -310,14 +311,12 @@ class Unwinder final : public IUnwinder {
     };
 
     struct Symbol {
-        struct Frame Frame;
+        Frame Frame;
 
-        std::optional<std::string> Name;
-        std::optional<std::string> FileName;
+        std::optional<std::string> Object;
+        std::optional<std::string> Function;
         std::optional<SourceLocation> Location;
-
         bool Inlined = false;
-        bool IsSignal = false;
     };
 
     using SymbolList = absl::InlinedVector<Symbol, 2>;
@@ -376,10 +375,9 @@ private:
     };
 
     void HandleThread(Dwfl_Thread* thread) {
-        FrameList frames;
-
         pid_t tid = dwfl_thread_tid(thread);
 
+        FrameList frames;
         int err = dwfl_thread_getframes(thread, +[](Dwfl_Frame* raw, void* arg) -> int {
             FrameList* frames = static_cast<FrameList*>(arg);
             Frame& frame = frames->emplace_back();
@@ -408,6 +406,10 @@ private:
             return;
         }
 
+        trace.ResolvedTrace = ResolveTrace(tid, frames);
+    }
+
+    std::string ResolveTrace(pid_t tid, std::span<Frame> frames) {
         fmt::memory_buffer traceBuf;
         fmt::format_to(traceBuf, "{}", ThreadName(tid));
 
@@ -416,7 +418,7 @@ private:
             const SymbolList& symbols = ResolveFrame(frame);
             for (const Symbol& sym : util::Reversed(symbols)) {
                 // fmt::print("#{:<#4}", frameNumber++);
-                if (!sym.Name) {
+                if (!sym.Function) {
                     // fmt::print("{:#018x}\n", sym.Frame.InstructionPointer);
                     fmt::format_to(traceBuf, ";{:#018x}", sym.Frame.InstructionPointer);
                     continue;
@@ -433,10 +435,10 @@ private:
                     }
                 }
                 // fmt::print("{}{}{}\n", sym.Name.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
-                fmt::format_to(traceBuf, ";{}{}{}", sym.Name.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
+                fmt::format_to(traceBuf, ";{}{}{}", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
             }
         }
-        trace.ResolvedTrace = std::string{traceBuf.data(), traceBuf.size()};
+        return std::string{traceBuf.data(), traceBuf.size()};
     }
 
     std::string ThreadName(pid_t tid) {
@@ -468,7 +470,7 @@ private:
         Dwfl_Module* module = dwfl_addrmodule(Dwfl_, frame.InstructionPointerAdjusted());
         if (!module) {
             return {{
-                .Name = "<unknown>",
+                .Frame = frame,
             }};
         }
 
@@ -476,16 +478,11 @@ private:
         std::optional<Dwarf_Die> debugInfoElement;
 
         Dwarf_Addr offset = 0;
-        Dwarf_Die* comilationUnitDebugInfoElement = dwfl_module_addrdie(module, frame.InstructionPointerAdjusted(), &offset);
-        spdlog::debug("Found DIE {:x} for rip {:x} with bias {}", (uintptr_t)comilationUnitDebugInfoElement, frame.InstructionPointerAdjusted(), offset);
+        Dwarf_Die* cudie = dwfl_module_addrdie(module, frame.InstructionPointerAdjusted(), &offset);
+        spdlog::debug("Found DIE {:x} for rip {:x} with bias {}", (uintptr_t)cudie, frame.InstructionPointerAdjusted(), offset);
 
         Dwarf_Die* scopes = nullptr;
-        int numScopes = dwarf_getscopes(comilationUnitDebugInfoElement, frame.InstructionPointerAdjusted() - offset, &scopes);
-        /*
-        if (numScopes == -1) {
-            throw DwflError{};
-        }
-        */
+        int numScopes = dwarf_getscopes(cudie, frame.InstructionPointerAdjusted() - offset, &scopes);
 
         DEFER {
             ::free(scopes);
@@ -529,7 +526,7 @@ private:
                 int tag = dwarf_tag(scope);
                 if (IsInlinedScope(tag)) {
                     const char* inlinedSymbolName = TryGetDebugInfoElementLinkageName(scope);
-                    symbols.push_back(FillSymbol(frame, module, inlinedSymbolName, comilationUnitDebugInfoElement, prevScope, true));
+                    symbols.push_back(FillSymbol(frame, module, inlinedSymbolName, cudie, prevScope, true));
                     prevScope = scope;
                 }
 
@@ -546,20 +543,19 @@ private:
         Symbol sym{
             .Frame = frame,
             .Inlined = inlined,
-            .IsSignal = frame.IsActivation,
         };
 
         if (name) {
-            sym.Name = cxx::abi::Demangle(name);
-            spdlog::debug("Start resolve frame {}, inlined: {}", *sym.Name, inlined);
+            sym.Function = cxx::abi::Demangle(name);
+            spdlog::debug("Start resolve frame {}, inlined: {}", *sym.Function, inlined);
         } else {
-            sym.Name = "??";
+            sym.Function = "??";
         }
 
         {
             const char* fileName = dwfl_module_info(module, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
             if (fileName) {
-                sym.FileName = fileName;
+                sym.Object = fileName;
             }
         }
 
@@ -647,6 +643,7 @@ private:
     }
 
     void FillDwflReport() {
+        dwfl_report_begin(Dwfl_);
         CHECK_DWFL(dwfl_linux_proc_report(Dwfl_, Pid_));
         CHECK_DWFL(dwfl_report_end(Dwfl_, nullptr, nullptr));
     }
@@ -656,8 +653,8 @@ private:
     }
 
     void ValidateAttachedPid() {
-        if (dwfl_pid(Dwfl_) < 0) {
-            throw util::Error{"Invalid pid"};
+        if (pid_t pid = dwfl_pid(Dwfl_); pid != Pid_) {
+            throw util::Error{"Invalid pid {}", pid};
         }
     }
 
