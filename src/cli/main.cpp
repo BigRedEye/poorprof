@@ -755,8 +755,6 @@ int Main(int argc, const char* argv[]) {
         }
 
         std::this_thread::sleep_until(start + sleep_delta);
-
-        break;
     }
     spdlog::info("Stopped by SIGINT");
 
