@@ -37,8 +37,8 @@ namespace util {
 class Error : public std::runtime_error {
 public:
     template <typename ...Args>
-    Error(std::string_view format, Args&& ...args)
-        : std::runtime_error{fmt::format(format, std::forward<Args>(args)...)}
+    Error(std::string_view fmt, Args&& ...args)
+        : std::runtime_error{fmt::vformat(fmt, fmt::make_format_args(std::forward<Args>(args)...))}
     {
     }
 };
@@ -311,7 +311,7 @@ class Unwinder final : public IUnwinder {
     };
 
     struct Symbol {
-        Frame Frame;
+        struct Frame Frame;
 
         std::optional<std::string> Object;
         std::optional<std::string> Function;
@@ -751,10 +751,11 @@ int Main(int argc, const char* argv[]) {
 
         if (count % 10000 == 0) {
             auto now = std::chrono::high_resolution_clock::now();
-            spdlog::info("Collected {} traces in {:.3f}s", count, std::chrono::duration_cast<std::chrono::duration<double>>(now - begin).count());
+            auto delta = std::chrono::duration_cast<std::chrono::duration<double>>(now - begin).count();
+            spdlog::info("Collected {} traces in {:.3f}s ({:.3f} traces/s)", count, delta, count / delta);
         }
 
-        std::this_thread::sleep_until(start + sleep_delta);
+        std::this_thread::sleep_until(begin + sleep_delta * count);
     }
     spdlog::info("Stopped by SIGINT");
 
