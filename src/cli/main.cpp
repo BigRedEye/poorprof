@@ -296,7 +296,7 @@ class Unwinder final : public IUnwinder {
 
         auto operator<=>(const Frame& rhs) const noexcept = default;
 
-        Dwarf_Addr InstructionPointerAdjusted()  {
+        Dwarf_Addr InstructionPointerAdjusted() const {
             return InstructionPointer - (IsActivation ? 0 : 1);
         }
 
@@ -437,7 +437,7 @@ private:
                     }
                 }
                 // fmt::print("{}{}{}\n", sym.Name.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
-                fmt::format_to(std::back_inserter(traceBuf), ";{}{}{}", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
+                fmt::format_to(std::back_inserter(traceBuf), ";{}{}{} 0x{:x}-1", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str(), sym.Frame.InstructionPointer);
             }
         }
         return std::string{traceBuf.data(), traceBuf.size()};
@@ -466,8 +466,109 @@ private:
         return SymbolCache_[frame] = ResolveFrameImpl(frame);
     }
 
+    static bool DieHasPc(Dwarf_Die *die, Dwarf_Addr pc) {
+        Dwarf_Addr low, high;
+
+        // continuous range
+        if (dwarf_hasattr(die, DW_AT_low_pc) && dwarf_hasattr(die, DW_AT_high_pc)) {
+            if (dwarf_lowpc(die, &low) != 0) {
+                return false;
+            }
+            if (dwarf_highpc(die, &high) != 0) {
+                Dwarf_Attribute attr_mem;
+                Dwarf_Attribute *attr = dwarf_attr(die, DW_AT_high_pc, &attr_mem);
+                Dwarf_Word value;
+                if (dwarf_formudata(attr, &value) != 0) {
+                    return false;
+                }
+                high = low + value;
+            }
+            return pc >= low && pc < high;
+        }
+
+        // non-continuous range.
+        Dwarf_Addr base;
+        ptrdiff_t offset = 0;
+        while ((offset = dwarf_ranges(die, offset, &base, &low, &high)) > 0) {
+            if (pc >= low && pc < high) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static Dwarf_Die *FindFunDieByPc(Dwarf_Die *parent_die, Dwarf_Addr pc, Dwarf_Die *result) {
+        if (dwarf_child(parent_die, result) != 0) {
+            return 0;
+        }
+
+        Dwarf_Die *die = result;
+        do {
+            switch (dwarf_tag(die)) {
+                case DW_TAG_subprogram:
+                case DW_TAG_inlined_subroutine:
+                    if (DieHasPc(die, pc)) {
+                        return result;
+                    }
+            };
+            bool declaration = false;
+            Dwarf_Attribute attr_mem;
+            dwarf_formflag(dwarf_attr(die, DW_AT_declaration, &attr_mem),
+                    &declaration);
+            if (!declaration) {
+                // let's be curious and look deeper in the tree,
+                // function are not necessarily at the first level, but
+                // might be nested inside a namespace, structure etc.
+                Dwarf_Die die_mem;
+                Dwarf_Die *indie = FindFunDieByPc(die, pc, &die_mem);
+                if (indie) {
+                    *result = die_mem;
+                    return result;
+                }
+            }
+        } while (dwarf_siblingof(die, result) == 0);
+        return 0;
+    }
+
+    void VisitDwarf(Dwarf_Die* die) {
+        Dwarf_Die child;
+        if (dwarf_child(die, &child) != 0) {
+            return;
+        }
+
+        do {
+            VisitDwarf(&child);
+            switch (dwarf_tag(&child)) {
+                case DW_TAG_call_site:
+                case DW_TAG_GNU_call_site: {
+                    Dwarf_Attribute attr;
+                    if (dwarf_attr_integrate(&child, DW_AT_abstract_origin, &attr) == 0) {
+                        break;
+                    }
+                    Dwarf_Die mem;
+                    if (dwarf_formref_die(&attr, &mem) == 0) {
+                        break;
+                    }
+                    const char* name = dwarf_diename(&mem) ?: "(null)";
+
+                    Dwarf_Word ptr = 0xbebebebe;
+                    dwarf_lowpc(&child, &ptr);
+                    spdlog::info("Found call site to {} die at {:x} (DW_AT_low_pc=0x{:x})", name, (uintptr_t)child.addr, (uintptr_t)ptr);
+                }
+                break;
+
+                default:
+                    break;
+            };
+        } while (dwarf_siblingof(&child, &child) == 0);
+    }
+
     SymbolList ResolveFrameImpl(Frame frame) {
-        spdlog::debug("Start resolve frame at rip {}", frame.InstructionPointer);
+        if (frame.IsActivation) {
+            spdlog::info("Activation frame at {:x}", frame.InstructionPointer);
+        }
+
+        spdlog::debug("Start resolve frame at rip {:x}", frame.InstructionPointer);
 
         Dwfl_Module* module = dwfl_addrmodule(Dwfl_, frame.InstructionPointerAdjusted());
         if (!module) {
@@ -481,6 +582,16 @@ private:
 
         Dwarf_Addr offset = 0;
         Dwarf_Die* cudie = dwfl_module_addrdie(module, frame.InstructionPointerAdjusted(), &offset);
+        if (!cudie) {
+            while ((cudie = dwfl_module_nextcu(module, cudie, &offset))) {
+                Dwarf_Die die_mem;
+                Dwarf_Die *fundie = FindFunDieByPc(cudie, frame.InstructionPointerAdjusted() - offset, &die_mem);
+                if (fundie) {
+                    break;
+                }
+            }
+        }
+
         spdlog::debug("Found DIE {:x} for rip {:x} with bias {}", (uintptr_t)cudie, frame.InstructionPointerAdjusted(), offset);
 
         Dwarf_Die* scopes = nullptr;
@@ -495,11 +606,14 @@ private:
             for (Dwarf_Die* scope = scopes; scope < scopes + numScopes; ++scope) {
                 if (IsInlinedScope(scope)) {
                     firstSymbolName = TryGetDebugInfoElementLinkageName(scope);
+                } else {
+                    spdlog::info("Non-inlined scope {} (DW_TAG_GNU_call_site = {})\n", (int)dwarf_tag(scope), DW_TAG_GNU_call_site);
+                    VisitDwarf(scope);
                 }
 
                 if (firstSymbolName) {
                     debugInfoElement = *scope;
-                    break;
+                    // break;
                 }
             }
         }
@@ -511,7 +625,9 @@ private:
             firstSymbolName = "<unknown>";
         }
 
-        spdlog::debug("Found {} scopes for symbol {}", numScopes, cxx::abi::Demangle(firstSymbolName));
+        if (firstSymbolName) {
+            spdlog::debug("Found {} scopes for symbol {}", numScopes, cxx::abi::Demangle(firstSymbolName));
+        }
 
         SymbolList symbols;
         symbols.push_back(FillSymbol(frame, module, firstSymbolName, nullptr, nullptr, false));
@@ -739,7 +855,7 @@ Options ParseOptions(int argc, const char* argv[]) {
 }
 
 int Main(int argc, const char* argv[]) {
-    spdlog::set_level(spdlog::level::info);
+    spdlog::set_level(spdlog::level::debug);
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
     spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f [%^%l%$] %v");
 

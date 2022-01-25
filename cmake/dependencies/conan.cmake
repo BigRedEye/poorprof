@@ -12,7 +12,7 @@ conan_cmake_autodetect(settings)
 
 conan_cmake_install(
     PATH_OR_REFERENCE ${CMAKE_SOURCE_DIR}/conanfile.py
-    BUILD missing
+    BUILD all
     SETTINGS ${settings}
 )
 
