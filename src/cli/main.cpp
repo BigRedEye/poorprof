@@ -688,6 +688,7 @@ struct Options {
 
     bool ThreadNames = false;
     double Frequency = 0.0;
+    std::optional<size_t> MaxSamples;
 };
 
 Options ParseOptions(int argc, const char* argv[]) {
@@ -714,6 +715,11 @@ Options ParseOptions(int argc, const char* argv[]) {
         .description("Collect samples at this frequency")
         .default_value(0)
         .store(options.Frequency);
+
+    parser
+        .add('L', "limit")
+        .description("Limit number of samples")
+        .store<size_t>(options.MaxSamples);
 
     parser
         .add('d', "debug-info")
@@ -744,25 +750,26 @@ int Main(int argc, const char* argv[]) {
 
     poorprof::dw::Unwinder unwinder{options.Pid};
 
-    size_t count = 0;
     auto begin = std::chrono::high_resolution_clock::now();
-
     auto sleep_delta = options.Frequency ? std::chrono::seconds{1} / options.Frequency : std::chrono::seconds{0};
-    while (!util::ctrlc::WasInterrupted()) {
+    size_t max = options.MaxSamples.value_or(std::numeric_limits<size_t>::max());
+    for (size_t iter = 1; iter <= max; ++iter) {
+        if (util::ctrlc::WasInterrupted()) {
+            spdlog::info("Stopped by SIGINT");
+            break;
+        }
+
         auto start = std::chrono::steady_clock::now();
         unwinder.Unwind();
 
-        ++count;
-
-        if (count % 10000 == 0) {
+        if (iter % 10000 == 0) {
             auto now = std::chrono::high_resolution_clock::now();
             auto delta = std::chrono::duration_cast<std::chrono::duration<double>>(now - begin).count();
-            spdlog::info("Collected {} traces in {:.3f}s ({:.3f} traces/s)", count, delta, count / delta);
+            spdlog::info("Collected {} traces in {:.3f}s ({:.3f} traces/s)", iter, delta, iter / delta);
         }
 
-        std::this_thread::sleep_until(begin + sleep_delta * count);
+        std::this_thread::sleep_until(begin + sleep_delta * iter);
     }
-    spdlog::info("Stopped by SIGINT");
 
     unwinder.DumpTraces();
 
