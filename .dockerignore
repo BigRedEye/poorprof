@@ -1,0 +1,5 @@
+build
+Dockerfile
+docker/Dockerfile*
+.git
+.cache

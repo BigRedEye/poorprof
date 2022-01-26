@@ -1,0 +1,5 @@
+message("Using dependencies from ${POORPROF_DEPS}")
+if(${POORPROF_DEPS} STREQUAL "vcpkg")
+    include(cmake/dependencies/vcpkg_features.cmake)
+    include(cmake/dependencies/vcpkg_toolchain.cmake)
+endif()

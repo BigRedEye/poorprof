@@ -1,0 +1,109 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release-vcpkg",
+      "displayName": "Release vcpkg",
+      "description": "Release build using deps from vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-vcpkg",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "vcpkg"
+      }
+    },
+    {
+      "name": "release-vcpkg-static",
+      "displayName": "Release vcpkg",
+      "description": "Release build using deps from vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-vcpkg-static",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_STATIC_LIBC": true,
+        "POORPROF_STATIC_LIBSTDCXX": true,
+        "POORPROF_DEPS": "vcpkg"
+      }
+    },
+    {
+      "name": "debug-vcpkg",
+      "displayName": "Debug vcpkg",
+      "description": "Debug build using deps from vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-vcpkg",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "vcpkg"
+      }
+    },
+    {
+      "name": "release-system",
+      "displayName": "Release system",
+      "description": "Release build using deps from system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "system"
+      }
+    },
+    {
+      "name": "debug-system",
+      "displayName": "Debug system",
+      "description": "Debug build using deps from system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "system"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release-vcpkg",
+      "configurePreset": "release-vcpkg",
+      "displayName": "Release vcpkg",
+      "description": "Release build using deps from vcpkg"
+    },
+    {
+      "name": "release-vcpkg-static",
+      "configurePreset": "release-vcpkg-static",
+      "displayName": "Release vcpkg static",
+      "description": "Release build using deps from vcpkg"
+    },
+    {
+      "name": "debug-vcpkg",
+      "configurePreset": "debug-vcpkg",
+      "displayName": "Debug vcpkg",
+      "description": "Debug build using deps from vcpkg"
+    },
+    {
+      "name": "release-system",
+      "configurePreset": "release-system",
+      "displayName": "Release system",
+      "description": "Release build using deps from system"
+    },
+    {
+      "name": "debug-system",
+      "configurePreset": "debug-system",
+      "displayName": "Debug system",
+      "description": "Debug build using deps from system"
+    }
+  ]
+}
