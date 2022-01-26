@@ -16,6 +16,10 @@ set_target_properties(poorprof_dw PROPERTIES
 )
 
 target_link_libraries(poorprof_dw
-    PRIVATE ${POORPROF_LIBRARY_ELFUTILS}
+    PUBLIC ${LIBDWARF_LIBRARIES}
     PUBLIC ${CMAKE_DL_LIBS}
+)
+
+target_include_directories(poorprof_dw
+    PUBLIC ${LIBDWARF_INCLUDE_DIRS}
 )

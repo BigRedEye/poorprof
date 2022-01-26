@@ -1,8 +1,13 @@
-find_package(Freetype REQUIRED)
-list(APPEND POORPROF_PRIVATE_LIBRARIES Freetype::Freetype)
+SET(CMAKE_FIND_LIBRARY_SUFFIXES .a)
 
-find_package(harfbuzz REQUIRED)
-list(APPEND POORPROF_PRIVATE_LIBRARIES harfbuzz::harfbuzz)
+find_package(fmt REQUIRED)
+list(APPEND POORPROF_PRIVATE_LIBRARIES fmt::fmt)
 
-find_package(Fontconfig REQUIRED)
-list(APPEND POORPROF_PRIVATE_LIBRARIES Fontconfig::Fontconfig)
+find_package(ElfUtils REQUIRED)
+list(APPEND POORPROF_PRIVATE_LIBRARIES ${LIBDWARF_LIBRARIES} ${LIBDW_LIBRARIES} ${LIBELF_LIBRARIES})
+
+find_package(absl REQUIRED)
+list(APPEND POORPROF_PRIVATE_LIBRARIES absl::flat_hash_map)
+
+find_package(spdlog REQUIRED)
+list(APPEND POORPROF_PRIVATE_LIBRARIES spdlog::spdlog)

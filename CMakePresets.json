@@ -8,79 +8,69 @@
   "configurePresets": [
     {
       "name": "release-vcpkg",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator",
-      "generator": "Unix Makefiles",
+      "displayName": "Release vcpkg",
+      "description": "Release build using deps from vcpkg",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release-vcpkg",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "vcpkg",
-        "FORCE_COLORED_OUTPUT": true
-      },
-      "environment": {
-      }
-    },
-    {
-      "name": "release-conan",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/release-conan",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "conan",
-        "FORCE_COLORED_OUTPUT": true
-      },
-      "environment": {
-      }
-    },
-    {
-      "name": "release-conan-musl",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/release-conan",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "conan",
         "FORCE_COLORED_OUTPUT": true,
-        "POORPROF_STATIC_LIBSTDCXX": true,
-        "POORPROF_STATIC_LIBC": true
-      },
-      "environment": {
+        "POORPROF_DEPS": "vcpkg"
       }
     },
     {
-      "name": "debug-conan",
-      "displayName": "Debug Config",
-      "description": "Debug build using Unix Makefiles generator",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build/debug-conan",
+      "name": "release-vcpkg-static",
+      "displayName": "Release vcpkg",
+      "description": "Release build using deps from vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release-vcpkg-static",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_STATIC_LIBC": true,
+        "POORPROF_STATIC_LIBSTDCXX": true,
+        "POORPROF_DEPS": "vcpkg"
+      }
+    },
+    {
+      "name": "debug-vcpkg",
+      "displayName": "Debug vcpkg",
+      "description": "Debug build using deps from vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-vcpkg",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "conan",
-        "FORCE_COLORED_OUTPUT": true
-      },
-      "environment": {
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "vcpkg"
       }
     },
     {
       "name": "release-system",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator",
-      "generator": "Unix Makefiles",
+      "displayName": "Release system",
+      "description": "Release build using deps from system",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release-system",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
-        "POORPROF_DEPS": "system",
-        "FORCE_COLORED_OUTPUT": true
-      },
-      "environment": {
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "system"
+      }
+    },
+    {
+      "name": "debug-system",
+      "displayName": "Debug system",
+      "description": "Debug build using deps from system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "system"
       }
     }
   ],
@@ -88,32 +78,32 @@
     {
       "name": "release-vcpkg",
       "configurePreset": "release-vcpkg",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator"
+      "displayName": "Release vcpkg",
+      "description": "Release build using deps from vcpkg"
     },
     {
-      "name": "release-conan",
-      "configurePreset": "release-conan",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator"
+      "name": "release-vcpkg-static",
+      "configurePreset": "release-vcpkg-static",
+      "displayName": "Release vcpkg static",
+      "description": "Release build using deps from vcpkg"
     },
     {
-      "name": "release-conan-musl",
-      "configurePreset": "release-conan-musl",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator"
-    },
-    {
-      "name": "debug-conan",
-      "configurePreset": "debug-conan",
-      "displayName": "Debug Config",
-      "description": "Debug build using Unix Makefiles generator"
+      "name": "debug-vcpkg",
+      "configurePreset": "debug-vcpkg",
+      "displayName": "Debug vcpkg",
+      "description": "Debug build using deps from vcpkg"
     },
     {
       "name": "release-system",
       "configurePreset": "release-system",
-      "displayName": "Release Config",
-      "description": "Release build using Unix Makefiles generator"
+      "displayName": "Release system",
+      "description": "Release build using deps from system"
+    },
+    {
+      "name": "debug-system",
+      "configurePreset": "debug-system",
+      "displayName": "Debug system",
+      "description": "Debug build using deps from system"
     }
   ]
 }

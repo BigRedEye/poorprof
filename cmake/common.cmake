@@ -8,3 +8,5 @@ if (${FORCE_COLORED_OUTPUT})
        add_compile_options(-fcolor-diagnostics)
     endif()
 endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
