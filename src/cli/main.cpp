@@ -507,6 +507,9 @@ private:
         if (firstSymbolName == nullptr) {
             firstSymbolName = dwfl_module_addrname(module, frame.InstructionPointerAdjusted());
         }
+        if (firstSymbolName == nullptr) {
+            firstSymbolName = "<unknown>";
+        }
 
         spdlog::debug("Found {} scopes for symbol {}", numScopes, cxx::abi::Demangle(firstSymbolName));
 
