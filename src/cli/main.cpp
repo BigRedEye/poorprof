@@ -23,6 +23,8 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <limits>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -411,7 +413,7 @@ private:
 
     std::string ResolveTrace(pid_t tid, std::span<Frame> frames) {
         fmt::memory_buffer traceBuf;
-        fmt::format_to(traceBuf, "{}", ThreadName(tid));
+        fmt::format_to(std::back_inserter(traceBuf), "{}", ThreadName(tid));
 
         unsigned frameNumber = 0;
         for (Frame frame : util::Reversed(frames)) {
@@ -420,7 +422,7 @@ private:
                 // fmt::print("#{:<#4}", frameNumber++);
                 if (!sym.Function) {
                     // fmt::print("{:#018x}\n", sym.Frame.InstructionPointer);
-                    fmt::format_to(traceBuf, ";{:#018x}", sym.Frame.InstructionPointer);
+                    fmt::format_to(std::back_inserter(traceBuf), ";{:#018x}", sym.Frame.InstructionPointer);
                     continue;
                 }
 
@@ -435,7 +437,7 @@ private:
                     }
                 }
                 // fmt::print("{}{}{}\n", sym.Name.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
-                fmt::format_to(traceBuf, ";{}{}{}", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
+                fmt::format_to(std::back_inserter(traceBuf), ";{}{}{}", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
             }
         }
         return std::string{traceBuf.data(), traceBuf.size()};
