@@ -15,7 +15,7 @@ set_target_properties(poorprof PROPERTIES
 )
 
 target_link_libraries(poorprof
-    PRIVATE ${POORPROF_PRIVATE_LIBRARIES} poorprof_dw
+    PUBLIC ${POORPROF_PRIVATE_LIBRARIES} poorprof_dw
     PUBLIC ${POORPROF_PUBLIC_LIBRARIES}
 )
 

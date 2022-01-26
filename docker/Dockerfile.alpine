@@ -10,5 +10,5 @@ RUN cp docker/vcpkg-alpine.json vcpkg.json
 ENV VCPKG_FORCE_SYSTEM_BINARIES=1
 RUN cmake --preset=release-vcpkg-static
 RUN cmake --build --preset=release-vcpkg-static
-RUN cp build/release-vcpkg-static/src/cli/poorprof /poorprof
+RUN cp build/release-vcpkg-static/bin/poorprof /poorprof
 RUN ldd /poorprof || true
