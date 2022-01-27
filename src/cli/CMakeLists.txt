@@ -8,14 +8,9 @@ set(
 )
 
 add_executable(poorprof ${SOURCES} ${HEADERS})
-set_target_properties(poorprof PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-    CXX_EXTENSIONS OFF
-)
 
 target_link_libraries(poorprof
-    PUBLIC ${POORPROF_PRIVATE_LIBRARIES} poorprof_dw
+    PRIVATE ${POORPROF_PRIVATE_LIBRARIES} poorprof_util poorprof_dw
     PUBLIC ${POORPROF_PUBLIC_LIBRARIES}
 )
 

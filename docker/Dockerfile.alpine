@@ -1,8 +1,7 @@
 FROM alpine:edge AS builder
 RUN apk add linux-headers build-base make bash gcc g++ git cmake python3
-RUN apk add ninja zip unzip curl
-RUN apk add elfutils-dev zlib-static bzip2-static
-RUN apk add libelf-static
+RUN apk add ninja zip unzip curl musl-dev
+RUN apk add elfutils-dev libelf-static zlib-static bzip2-static
 
 WORKDIR /src
 COPY . .
