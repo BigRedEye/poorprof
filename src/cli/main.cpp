@@ -692,6 +692,10 @@ private:
                 }
             }
         }
+        symbols.back().Inlined = false;
+        for (size_t i = 0; i + 1 < symbols.size(); ++i) {
+            symbols[i].Inlined = true;
+        }
 
         return symbols;
     }
@@ -700,7 +704,6 @@ private:
         bool inlined = lastScope != nullptr;
         Symbol sym{
             .Frame = frame,
-            .Inlined = inlined,
         };
 
         if (name) {
@@ -719,21 +722,21 @@ private:
 
         SourceLocation location;
         if (inlined) {
+            Dwarf_Attribute attr;
+            Dwarf_Word val = 0;
             Dwarf_Files* files = nullptr;
             if (dwarf_getsrcfiles(cudie, &files, NULL) == 0) {
-                Dwarf_Attribute attr;
-                Dwarf_Word val = 0;
                 if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_file, &attr), &val) == 0) {
                     location.File = dwarf_filesrc(files, val, NULL, NULL);
-                    if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_line, &attr), &val) == 0) {
-                        location.Line = val;
-                        if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_column, &attr), &val) == 0) {
-                            location.Column = val;
-                        }
-                    }
                 }
             } else {
                 location.File = "<<dwarf_getsrcfiles>>";
+            }
+            if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_line, &attr), &val) == 0) {
+                location.Line = val;
+            }
+            if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_column, &attr), &val) == 0) {
+                location.Column = val;
             }
         } else {
             Dwarf_Line* line = dwarf_getsrc_die(cudie, frame.InstructionPointerAdjusted() - mod_offset);
@@ -828,7 +831,7 @@ private:
     Dwfl_Callbacks Callbacks_;
     Dwfl* Dwfl_ = nullptr;
 
-    absl::flat_hash_map<Frame, absl::InlinedVector<Symbol, 2>> SymbolCache_;
+    absl::flat_hash_map<Frame, SymbolList> SymbolCache_;
     absl::flat_hash_map<pid_t, std::string> ThreadNameCache_;
     absl::flat_hash_map<size_t, TraceInfo> Traces_;
 };
