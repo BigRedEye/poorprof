@@ -419,6 +419,11 @@ private:
 
         unsigned frameNumber = 0;
         for (Frame frame : util::Reversed(frames)) {
+            if (frameNumber == 0 && frame.InstructionPointerAdjusted() == 0x0) {
+                continue;
+            }
+            ++frameNumber;
+
             const SymbolList& symbols = ResolveFrame(frame);
             for (const Symbol& sym : util::Reversed(symbols)) {
                 if (!sym.Function) {
