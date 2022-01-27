@@ -596,7 +596,6 @@ private:
             }
         }
         if (!cudie) {
-            spdlog::info("HORRIBLE");
             // If it's still not enough, lets dive deeper in the shit, and try
             // to save the world again: for every compilation unit, we will
             // load the corresponding .debug_line section, and see if we can
@@ -904,7 +903,7 @@ Options ParseOptions(int argc, const char* argv[]) {
 }
 
 int Main(int argc, const char* argv[]) {
-    spdlog::set_level(spdlog::level::debug);
+    spdlog::set_level(spdlog::level::info);
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
     spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f [%^%l%$] %v");
 
