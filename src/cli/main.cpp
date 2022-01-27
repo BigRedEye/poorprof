@@ -21,6 +21,7 @@
 #include <compare>
 #include <csignal>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -413,16 +414,15 @@ private:
 
     std::string ResolveTrace(pid_t tid, std::span<Frame> frames) {
         fmt::memory_buffer traceBuf;
-        fmt::format_to(std::back_inserter(traceBuf), "{}", ThreadName(tid));
+        auto buf = std::back_inserter(traceBuf);
+        fmt::format_to(buf, "{}", ThreadName(tid));
 
         unsigned frameNumber = 0;
         for (Frame frame : util::Reversed(frames)) {
             const SymbolList& symbols = ResolveFrame(frame);
             for (const Symbol& sym : util::Reversed(symbols)) {
-                // fmt::print("#{:<#4}", frameNumber++);
                 if (!sym.Function) {
-                    // fmt::print("{:#018x}\n", sym.Frame.InstructionPointer);
-                    fmt::format_to(std::back_inserter(traceBuf), ";{:#018x}", sym.Frame.InstructionPointer);
+                    fmt::format_to(buf, ";{:#018x}", sym.Frame.InstructionPointerAdjusted());
                     continue;
                 }
 
@@ -436,8 +436,7 @@ private:
                         }
                     }
                 }
-                // fmt::print("{}{}{}\n", sym.Name.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str());
-                fmt::format_to(std::back_inserter(traceBuf), ";{}{}{} 0x{:x}-1", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str(), sym.Frame.InstructionPointer);
+                fmt::format_to(buf, ";{}{}{} 0x{:x}-1", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str(), sym.Frame.InstructionPointer);
             }
         }
         return std::string{traceBuf.data(), traceBuf.size()};
@@ -513,8 +512,7 @@ private:
             };
             bool declaration = false;
             Dwarf_Attribute attr_mem;
-            dwarf_formflag(dwarf_attr(die, DW_AT_declaration, &attr_mem),
-                    &declaration);
+            dwarf_formflag(dwarf_attr(die, DW_AT_declaration, &attr_mem), &declaration);
             if (!declaration) {
                 // let's be curious and look deeper in the tree,
                 // function are not necessarily at the first level, but
@@ -567,59 +565,92 @@ private:
         if (frame.IsActivation) {
             spdlog::info("Activation frame at {:x}", frame.InstructionPointer);
         }
+        spdlog::debug("Start resolve frame at ip {:x}", frame.InstructionPointer);
 
-        spdlog::debug("Start resolve frame at rip {:x}", frame.InstructionPointer);
-
-        Dwfl_Module* module = dwfl_addrmodule(Dwfl_, frame.InstructionPointerAdjusted());
+        Dwarf_Addr ip = frame.InstructionPointerAdjusted();
+        Dwfl_Module* module = dwfl_addrmodule(Dwfl_, ip);
         if (!module) {
+            spdlog::debug("No module found for ip {:x}", ip);
             return {{
                 .Frame = frame,
             }};
         }
-
-        // DIE stands for Debug Info Element
-        std::optional<Dwarf_Die> debugInfoElement;
+        const char* moduleName = dwfl_module_info(module, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+        spdlog::info("Found module {}", moduleName);
 
         Dwarf_Addr offset = 0;
-        Dwarf_Die* cudie = dwfl_module_addrdie(module, frame.InstructionPointerAdjusted(), &offset);
+        Dwarf_Die* cudie = dwfl_module_addrdie(module, ip, &offset);
         if (!cudie) {
             while ((cudie = dwfl_module_nextcu(module, cudie, &offset))) {
+                spdlog::info("Try cudie {}", (uintptr_t)cudie);
                 Dwarf_Die die_mem;
-                Dwarf_Die *fundie = FindFunDieByPc(cudie, frame.InstructionPointerAdjusted() - offset, &die_mem);
+                Dwarf_Die *fundie = FindFunDieByPc(cudie, ip - offset, &die_mem);
                 if (fundie) {
                     break;
                 }
             }
         }
+        if (!cudie) {
+            spdlog::info("HORRIBLE");
+            // If it's still not enough, lets dive deeper in the shit, and try
+            // to save the world again: for every compilation unit, we will
+            // load the corresponding .debug_line section, and see if we can
+            // find our address in it.
 
-        spdlog::debug("Found DIE {:x} for rip {:x} with bias {}", (uintptr_t)cudie, frame.InstructionPointerAdjusted(), offset);
+            Dwarf_Addr cfi_bias;
+            Dwarf_CFI *cfi_cache = dwfl_module_eh_cfi(module, &cfi_bias);
+
+            Dwarf_Addr bias;
+            while ((cudie = dwfl_module_nextcu(module, cudie, &bias))) {
+                if (dwarf_getsrc_die(cudie, ip - bias)) {
+                    // ...but if we get a match, it might be a false positive
+                    // because our (address - bias) might as well be valid in a
+                    // different compilation unit. So we throw our last card on
+                    // the table and lookup for the address into the .eh_frame
+                    // section.
+
+                    Dwarf_Frame* frame = nullptr;
+                    dwarf_cfi_addrframe(cfi_cache, ip - cfi_bias, &frame);
+                    if (frame) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        spdlog::debug("Found CU DIE {:x} for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
 
         Dwarf_Die* scopes = nullptr;
-        int numScopes = dwarf_getscopes(cudie, frame.InstructionPointerAdjusted() - offset, &scopes);
+        int numScopes = dwarf_getscopes(cudie, ip - offset, &scopes);
 
         DEFER {
             ::free(scopes);
         };
 
+        Dwarf_Die* die = nullptr;
         const char* firstSymbolName = nullptr;
         if (numScopes > 0) {
             for (Dwarf_Die* scope = scopes; scope < scopes + numScopes; ++scope) {
                 if (IsInlinedScope(scope)) {
                     firstSymbolName = TryGetDebugInfoElementLinkageName(scope);
                 } else {
-                    spdlog::info("Non-inlined scope {} (DW_TAG_GNU_call_site = {})\n", (int)dwarf_tag(scope), DW_TAG_GNU_call_site);
+                    spdlog::info("Non-inlined scope {}", (int)dwarf_tag(scope));
                     VisitDwarf(scope);
                 }
 
                 if (firstSymbolName) {
-                    debugInfoElement = *scope;
-                    // break;
+                    spdlog::debug("Found by iteration");
+                    die = scope;
+                    break;
                 }
             }
         }
 
         if (firstSymbolName == nullptr) {
-            firstSymbolName = dwfl_module_addrname(module, frame.InstructionPointerAdjusted());
+            firstSymbolName = dwfl_module_addrname(module, ip);
+            if (firstSymbolName) {
+                spdlog::debug("Found by dwfl_module_addrname");
+            }
         }
         if (firstSymbolName == nullptr) {
             firstSymbolName = "<unknown>";
@@ -630,10 +661,10 @@ private:
         }
 
         SymbolList symbols;
-        symbols.push_back(FillSymbol(frame, module, firstSymbolName, nullptr, nullptr, false));
-        if (debugInfoElement) {
+        symbols.push_back(FillSymbol(frame, module, firstSymbolName, cudie, nullptr, offset));
+        if (die) {
             Dwarf_Die* scopes = nullptr;
-            int numInlinedSymbols = dwarf_getscopes_die(&*debugInfoElement, &scopes);
+            int numInlinedSymbols = dwarf_getscopes_die(die, &scopes);
             if (numInlinedSymbols == -1) {
                 throw DwflError{};
             }
@@ -647,7 +678,7 @@ private:
                 int tag = dwarf_tag(scope);
                 if (IsInlinedScope(tag)) {
                     const char* inlinedSymbolName = TryGetDebugInfoElementLinkageName(scope);
-                    symbols.push_back(FillSymbol(frame, module, inlinedSymbolName, cudie, prevScope, true));
+                    symbols.push_back(FillSymbol(frame, module, inlinedSymbolName, cudie, prevScope, offset));
                     prevScope = scope;
                 }
 
@@ -660,7 +691,8 @@ private:
         return symbols;
     }
 
-    Symbol FillSymbol(Frame frame, Dwfl_Module* module, const char* name, Dwarf_Die* cudie, Dwarf_Die* lastScope, bool inlined) {
+    Symbol FillSymbol(Frame frame, Dwfl_Module* module, const char* name, Dwarf_Die* cudie, Dwarf_Die* lastScope, Dwarf_Word mod_offset) {
+        bool inlined = lastScope != nullptr;
         Symbol sym{
             .Frame = frame,
             .Inlined = inlined,
@@ -681,7 +713,7 @@ private:
         }
 
         SourceLocation location;
-        if (lastScope) {
+        if (inlined) {
             Dwarf_Files* files = nullptr;
             if (dwarf_getsrcfiles(cudie, &files, NULL) == 0) {
                 Dwarf_Attribute attr;
@@ -699,24 +731,28 @@ private:
                 location.File = "<<dwarf_getsrcfiles>>";
             }
         } else {
-            location.File = "<<no last scope>>";
-            Dwfl_Line* line = dwfl_module_getsrc(module, frame.InstructionPointerAdjusted());
+            Dwarf_Line* line = dwarf_getsrc_die(cudie, frame.InstructionPointerAdjusted() - mod_offset);
             if (line == nullptr) {
-                spdlog::warn("No line found using dwfl_module_getsrc, name: {}", name);
-                line = dwfl_getsrc(Dwfl_, frame.InstructionPointerAdjusted());
-            }
-
-            if (line == nullptr) {
-                spdlog::warn("No line found using dwfl_getsrc, name: {}", name);
-            }
-
-            if (line) {
-                const char* name = dwfl_lineinfo(line, nullptr, &location.Line, &location.Column, nullptr, nullptr);
-                if (name) {
-                    location.File = name;
-                }
+                spdlog::warn("No line found using dwarf_getsrc_die, name: {}", name);
+                location.File = "<<no file>>:<<no line>>";
             } else {
-                location.File += ", <<no line>>";
+                Dwarf_Word length = 0;
+                Dwarf_Word mtime = 0;
+                const char* name = dwarf_linesrc(line, &mtime, &length);
+                if (length == 0 && name != 0) {
+                    length = std::strlen(name);
+                }
+                if (name) {
+                    location.File.assign(name, length);
+                } else {
+                    spdlog::info("dwarf_linesrc failed");
+                }
+                if (dwarf_lineno(line, &location.Line) < 0) {
+                    spdlog::info("dwarf_lineno failed");
+                }
+                if (dwarf_linecol(line, &location.Column) < 0) {
+                    spdlog::info("dwarf_linecol failed");
+                }
             }
         }
 
