@@ -441,7 +441,7 @@ private:
                         }
                     }
                 }
-                fmt::format_to(buf, ";{}{}{} 0x{:x}-1", sym.Function.value_or("<unknown>"), sym.Inlined ? " (inlined)" : "", location.str(), sym.Frame.InstructionPointer);
+                fmt::format_to(buf, ";{}{}{}", sym.Function.value_or("??"), sym.Inlined ? " (inlined)" : "", location.str());
             }
         }
         return std::string{traceBuf.data(), traceBuf.size()};
@@ -658,7 +658,7 @@ private:
             }
         }
         if (firstSymbolName == nullptr) {
-            firstSymbolName = "<unknown>";
+            firstSymbolName = "??";
         }
 
         if (firstSymbolName) {
@@ -739,11 +739,9 @@ private:
                 location.Column = val;
             }
         } else {
-            Dwarf_Line* line = dwarf_getsrc_die(cudie, frame.InstructionPointerAdjusted() - mod_offset);
-            if (line == nullptr) {
-                spdlog::warn("No line found using dwarf_getsrc_die, name: {}", name);
-                location.File = "<<no file>>:<<no line>>";
-            } else {
+            Dwarf_Word ip = frame.InstructionPointerAdjusted() - mod_offset; 
+            Dwarf_Line* line = dwarf_getsrc_die(cudie, ip);
+            if (line) {
                 Dwarf_Word length = 0;
                 Dwarf_Word mtime = 0;
                 const char* name = dwarf_linesrc(line, &mtime, &length);
@@ -761,6 +759,13 @@ private:
                 if (dwarf_linecol(line, &location.Column) < 0) {
                     spdlog::info("dwarf_linecol failed");
                 }
+            } else if (Dwfl_Line* line = dwfl_module_getsrc(module, ip)) {
+                const char* name = dwfl_lineinfo(line, nullptr, &location.Line, &location.Column, nullptr, nullptr);
+                if (name) {
+                    location.File = name;
+                }
+            } else {
+                // Failed to find source location for the given pc.
             }
         }
 
