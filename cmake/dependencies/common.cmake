@@ -10,7 +10,7 @@ list(APPEND POORPROF_PUBLIC_LIBRARIES Threads::Threads)
 FetchContent_Declare(
     cpparg
     GIT_REPOSITORY https://github.com/BigRedEye/cpparg
-    GIT_TAG        v0.2.3
+    GIT_TAG        v0.2.4
 )
 
 if(NOT cpparg_POPULATED)
@@ -30,8 +30,8 @@ if (POORPROF_ENABLE_BACKWARD)
 
     if(NOT backward_POPULATED)
         FetchContent_Populate(backward)
-        add_definitions(-DBACKWARD_HAS_DW=1)
-        add_subdirectory(${backward_SOURCE_DIR} ${backward_BINARY_DIR} EXCLUDE_FROM_ALL)
+        add_library(backward INTERFACE)
+        target_include_directories(backward INTERFACE ${backward_SOURCE_DIR})
+        target_compile_definitions(backward INTERFACE BACKWARD_HAS_DW=1)
     endif()
-    list(APPEND POORPROF_PRIVATE_LIBRARIES backward)
 endif()

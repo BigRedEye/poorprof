@@ -1,4 +1,4 @@
-#if BACKWARD_HAS_BACKTRACE_SYMBOL
+#ifdef __linux__
 #include <dlfcn.h>
 #endif
 
