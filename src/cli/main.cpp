@@ -22,6 +22,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -277,8 +278,7 @@ public:
 
     explicit DwflError(int errn)
         : std::runtime_error{fmt::format("dwfl failed: {}", dwfl_errmsg(errn))}
-    {
-    }
+    {}
 };
 
 #define CHECK_DWFL(...) \
@@ -325,8 +325,9 @@ class Unwinder final : public IUnwinder {
     using SymbolList = absl::InlinedVector<Symbol, 2>;
 
 public:
-    Unwinder(pid_t pid, std::optional<std::filesystem::path> debuginfo = std::nullopt)
+    Unwinder(pid_t pid, std::optional<std::filesystem::path> debuginfo = std::nullopt, std::optional<std::filesystem::path> maps = std::nullopt)
         : Pid_{pid}
+        , CustomMaps_{std::move(maps)}
         , DebugInfo_{std::move(debuginfo)}
         , DebugInfoPath_{DebugInfo_ ? DebugInfo_->data() : nullptr}
         , Callbacks_{
@@ -587,7 +588,6 @@ private:
         Dwarf_Die* cudie = dwfl_module_addrdie(module, ip, &offset);
         if (!cudie) {
             while ((cudie = dwfl_module_nextcu(module, cudie, &offset))) {
-                spdlog::info("Try cudie {}", (uintptr_t)cudie);
                 Dwarf_Die die_mem;
                 Dwarf_Die *fundie = FindFunDieByPc(cudie, ip - offset, &die_mem);
                 if (fundie) {
@@ -595,7 +595,7 @@ private:
                 }
             }
         }
-        if (!cudie) {
+        if (false && !cudie) {
             // If it's still not enough, lets dive deeper in the shit, and try
             // to save the world again: for every compilation unit, we will
             // load the corresponding .debug_line section, and see if we can
@@ -670,7 +670,7 @@ private:
             Dwarf_Die* scopes = nullptr;
             int numInlinedSymbols = dwarf_getscopes_die(die, &scopes);
             if (numInlinedSymbols == -1) {
-                throw DwflError{};
+                spdlog::warn("dwarf_getscopes_die failed: {}", dwfl_errmsg(-1));
             }
 
             DEFER {
@@ -807,14 +807,29 @@ private:
     void InitializeDwfl() {
         Dwfl_ = dwfl_begin(&Callbacks_);
         if (Dwfl_ == nullptr) {
+            spdlog::error("Failed to initialize dwfl");
             throw DwflError{};
         }
     }
 
     void FillDwflReport() {
         dwfl_report_begin(Dwfl_);
-        CHECK_DWFL(dwfl_linux_proc_report(Dwfl_, Pid_));
+        if (CustomMaps_) {
+            spdlog::error("Start dwfl_linux_proc_maps_report (pid: {})", Pid_);
+            FILE* maps = fopen(CustomMaps_->data(), "r");
+            int code = dwfl_linux_proc_maps_report(Dwfl_, maps);
+            fclose(maps);
+            spdlog::info("Finish dwfl_linux_proc_maps_report, code: {}", code);
+            CHECK_DWFL(code);
+        } else {
+            spdlog::error("Start dwfl_linux_proc_report (pid: {})", Pid_);
+            int code = dwfl_linux_proc_report(Dwfl_, Pid_);
+            spdlog::info("Finish dwfl_linux_proc_report, code: {}", code);
+            CHECK_DWFL(code);
+        }
+        spdlog::error("Start dwfl_report_end");
         CHECK_DWFL(dwfl_report_end(Dwfl_, nullptr, nullptr));
+        spdlog::error("Finish FillDwflReport");
     }
 
     void AttachToProcess() {
@@ -829,6 +844,7 @@ private:
 
 private:
     pid_t Pid_ = 0;
+    std::optional<std::string> CustomMaps_;
     std::optional<std::string> DebugInfo_;
     char* DebugInfoPath_ = nullptr;
 
@@ -849,6 +865,7 @@ namespace poorprof {
 struct Options {
     pid_t Pid = 0;
     std::optional<std::filesystem::path> DebugInfo;
+    std::optional<std::filesystem::path> CustomMaps;
 
     bool ThreadNames = false;
     double Frequency = 0.0;
@@ -894,6 +911,14 @@ Options ParseOptions(int argc, const char* argv[]) {
         });
 
     parser
+        .add('M', "maps")
+        .description("Use custom maps file")
+        .optional()
+        .handle<std::string>([&options](std::string arg) {
+            options.CustomMaps = std::filesystem::path{std::move(arg)};
+        });
+
+    parser
         .add_help('h', "help");
 
     parser
@@ -912,7 +937,7 @@ int Main(int argc, const char* argv[]) {
     Options options = ParseOptions(argc, argv);
     spdlog::info("Going to trace process {}", options.Pid);
 
-    poorprof::dw::Unwinder unwinder{options.Pid};
+    poorprof::dw::Unwinder unwinder{options.Pid, options.DebugInfo, options.CustomMaps};
 
     auto begin = std::chrono::high_resolution_clock::now();
     auto sleep_delta = options.Frequency ? std::chrono::seconds{1} / options.Frequency : std::chrono::seconds{0};
