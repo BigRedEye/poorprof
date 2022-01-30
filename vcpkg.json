@@ -6,6 +6,7 @@
     "fmt",
     "elfutils",
     "abseil",
-    "spdlog"
+    "spdlog",
+    "boost-iostreams"
   ]
 }
