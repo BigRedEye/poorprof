@@ -10,12 +10,14 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/hash/hash.h>
 
+#include <boost/iostreams/device/mapped_file.hpp>
+
 #include <dwarf.h>
 #include <elfutils/libdw.h>
 #include <elfutils/libdwelf.h>
 #include <elfutils/libdwfl.h>
-
-#include <sys/types.h>
+#include <gelf.h>
+#include <libelf.h>
 
 #include <chrono>
 #include <compare>
@@ -35,6 +37,16 @@
 #include <thread>
 #include <utility>
 
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif // __linux__
+
+
 /// UTIL
 namespace util {
 
@@ -43,8 +55,7 @@ public:
     template <typename ...Args>
     Error(std::string_view fmt, Args&& ...args)
         : std::runtime_error{fmt::vformat(fmt, fmt::make_format_args(std::forward<Args>(args)...))}
-    {
-    }
+    {}
 };
 
 } // namespace util
@@ -144,8 +155,11 @@ inline DeferredFunctor<F> operator<<=(const Defer&, F func) {
 
 } // namespace util::detail
 
+#define CAT2(a, b) a ## b
+#define CAT(a, b) CAT2(a, b)
+
 #define DEFER \
-    auto internalDeferDoNotUse ## __LINE__ = ::util::detail::Defer{} <<= [&]()
+    auto CAT(internalDeferDoNotUse, __LINE__) = ::util::detail::Defer{} <<= [&]()
 
 /// ABI
 #include <cxxabi.h>
@@ -289,8 +303,127 @@ public:
         throw std::system_error{err, std::system_category()}; \
     }
 
+class GdbIndex {
+public:
+    explicit GdbIndex(const char* path, const GElf_Shdr& section) {
+        boost::iostreams::mapped_file in{path};
+        int fd = ::open(path, O_RDONLY);
+        if (fd == -1) {
+            throw std::system_error{errno, std::system_category()};
+        }
+        DEFER {
+            ::close(fd);
+        };
 
-class Unwinder final : public IUnwinder {
+        struct stat stat;
+        int res = ::stat(path, &stat);
+        void* ptr = ::mmap(nullptr, stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (ptr == (void*)-1) {
+            throw std::system_error{errno, std::system_category()};
+        }
+        DEFER {
+            munmap(ptr, stat.st_size);
+        };
+
+        const char* begin = static_cast<const char*>(ptr);
+        ParseGdbIndex(begin, begin + section.sh_offset, section.sh_size);
+    }
+
+    ~GdbIndex() {
+        munmap(ptr_, size_);
+        close(fd_);
+    }
+
+    static std::optional<GdbIndex> OpenIndex(Dwfl_Module* mod, const char* path) {
+        std::optional<GElf_Shdr> gdbIndexSection;
+        IterateSections(mod, [&gdbIndexSection](const char* name, const GElf_Shdr& section) {
+            if (std::string_view{".gdb_index"} == name) {
+                gdbIndexSection = section;
+            }
+        });
+
+        if (!gdbIndexSection) {
+            spdlog::debug("Object {} does not contain gdb_index", path);
+            return std::nullopt;
+        }
+        if (path == nullptr) {
+            spdlog::warn("Failed to locate object file");
+            return std::nullopt;
+        }
+        spdlog::info("Found gdb_index for {}", path);
+
+        return std::make_optional<GdbIndex>(path, *gdbIndexSection);
+    }
+
+private:
+    template <typename F>
+    static void IterateSections(Dwfl_Module* mod, F&& cb) {
+        GElf_Addr bias;
+        Elf* elf = dwfl_module_getelf(mod, &bias);
+
+        GElf_Ehdr ehdr;
+        if (gelf_getehdr(elf, &ehdr) == nullptr) {
+            throw util::Error{"Failed to find ELF header"};
+        }
+        size_t shstrndx = 0;
+        if (elf_getshdrstrndx(elf, &shstrndx) != 0) {
+            throw util::Error{"Failed to find ELF section header string table"};
+        }
+        Elf_Scn* scn = nullptr;
+        while ((scn = elf_nextscn(elf, scn)) != nullptr) {
+            GElf_Shdr shdr;
+            gelf_getshdr(scn, &shdr);
+            const char* name = elf_strptr(elf, ehdr.e_shstrndx, shdr.sh_name);
+            cb(name, shdr);
+        }
+    }
+
+    static void ParseGdbIndex(const char* begin, const char* ptr, size_t size) {
+        using offset_type = std::uint32_t;
+
+        const char* cursor = ptr;
+        auto readOffset = [&]() mutable {
+            offset_type offset = 0;
+            std::memcpy(&offset, cursor, sizeof(offset_type));
+            cursor += sizeof(offset_type);
+            return offset;
+        };
+
+        offset_type version = readOffset();
+        spdlog::info("Found gdb index version {}", version);
+        offset_type cuListOffset = readOffset();
+        offset_type typesCuListOffset = readOffset();
+        offset_type addresAreaOffset = readOffset();
+        offset_type symbolTableOffset = readOffset();
+        offset_type constantPoolOffset = readOffset();
+
+        auto readUi64 = [&]() mutable {
+            std::uint64_t offset = 0;
+            std::memcpy(&offset, cursor, sizeof(offset_type));
+            cursor += sizeof(offset_type);
+            return offset;
+        };
+        cursor = begin + cuListOffset;
+
+        struct CULocation {
+            std::uint64_t DebugInfoOffset = 0;
+            std::uint64_t Length = 0;
+        };
+
+        auto numCus = (typesCuListOffset - cuListOffset) / sizeof(CULocation);
+        std::vector<CULocation> cus(numCus);
+        for (auto& cu : cus) {
+            cu.DebugInfoOffset = readUi64();
+            cu.Length = readUi64();
+        }
+        spdlog::info("Found {} CUs", numCus);
+    }
+
+private:
+    int Fd_ = -1;
+};
+
+class Unwinder : public IUnwinder {
     struct Frame {
         Dwarf_Addr InstructionPointer = 0;
         bool IsActivation = false;
@@ -313,10 +446,18 @@ class Unwinder final : public IUnwinder {
         int Column = 0;
     };
 
+    struct ObjectFile {
+        const char* Name = nullptr;
+        const char* File = nullptr;
+        Dwarf_Addr Begin = 0;
+        Dwarf_Addr End = 0;
+        std::optional<GdbIndex> Index;
+    };
+
     struct Symbol {
         struct Frame Frame;
 
-        std::optional<std::string> Object;
+        std::optional<ObjectFile*> Object;
         std::optional<std::string> Function;
         std::optional<SourceLocation> Location;
         bool Inlined = false;
@@ -428,21 +569,25 @@ private:
             const SymbolList& symbols = ResolveFrame(frame);
             for (const Symbol& sym : util::Reversed(symbols)) {
                 if (!sym.Function) {
-                    fmt::format_to(buf, ";{:#018x}", sym.Frame.InstructionPointerAdjusted());
+                    if (sym.Object) {
+                        ObjectFile* file = *sym.Object;
+                        fmt::format_to(buf, ";{}+{:#x}", file->File, sym.Frame.InstructionPointerAdjusted() - file->Begin);
+                    } else {
+                        fmt::format_to(buf, ";{:#018x}", sym.Frame.InstructionPointerAdjusted());
+                    }
                     continue;
                 }
+                fmt::format_to(buf, ";{}{}", *sym.Function, sym.Inlined ? " (inlined)" : "");
 
-                std::stringstream location;
                 if (auto& loc = sym.Location) {
-                    location << " at " << loc->File;
+                    fmt::format_to(buf, " at {}", loc->File);
                     if (loc->Line > 0) {
-                        location << ':' << loc->Line;
+                        fmt::format_to(buf, ":{}", loc->Line);
                         if (loc->Column > 0) {
-                            location << ':' << loc->Column;
+                            fmt::format_to(buf, ":{}", loc->Column);
                         }
                     }
                 }
-                fmt::format_to(buf, ";{}{}{}", sym.Function.value_or("??"), sym.Inlined ? " (inlined)" : "", location.str());
             }
         }
         return std::string{traceBuf.data(), traceBuf.size()};
@@ -502,7 +647,7 @@ private:
         return false;
     }
 
-    static Dwarf_Die *FindFunDieByPc(Dwarf_Die *parent_die, Dwarf_Addr pc, Dwarf_Die *result) {
+    static Dwarf_Die* FindFunDieByPc(Dwarf_Die* parent_die, Dwarf_Addr pc, Dwarf_Die* result) {
         if (dwarf_child(parent_die, result) != 0) {
             return 0;
         }
@@ -581,8 +726,14 @@ private:
                 .Frame = frame,
             }};
         }
-        const char* moduleName = dwfl_module_info(module, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-        spdlog::info("Found module {}", moduleName);
+
+        if (!Modules_.contains(module)) {
+            ObjectFile obj;
+            obj.Name = dwfl_module_info(module, nullptr, &obj.Begin, &obj.End, nullptr, nullptr, &obj.File, nullptr);
+            spdlog::info("Found module {} (@{})", obj.Name, obj.File);
+            auto&& objectFile = Modules_[module] = std::make_unique<ObjectFile>(obj);
+        }
+        ObjectFile* obj = Modules_[module].get();
 
         Dwarf_Addr offset = 0;
         Dwarf_Die* cudie = dwfl_module_addrdie(module, ip, &offset);
@@ -656,16 +807,13 @@ private:
                 spdlog::debug("Found by dwfl_module_addrname");
             }
         }
-        if (firstSymbolName == nullptr) {
-            firstSymbolName = "??";
-        }
 
         if (firstSymbolName) {
             spdlog::debug("Found {} scopes for symbol {}", numScopes, cxx::abi::Demangle(firstSymbolName));
         }
 
         SymbolList symbols;
-        symbols.push_back(FillSymbol(frame, module, firstSymbolName, cudie, nullptr, offset));
+        symbols.push_back(FillSymbol(frame, module, obj, firstSymbolName, cudie, nullptr, offset));
         if (die) {
             Dwarf_Die* scopes = nullptr;
             int numInlinedSymbols = dwarf_getscopes_die(die, &scopes);
@@ -682,7 +830,7 @@ private:
                 int tag = dwarf_tag(scope);
                 if (IsInlinedScope(tag)) {
                     const char* inlinedSymbolName = TryGetDebugInfoElementLinkageName(scope);
-                    symbols.push_back(FillSymbol(frame, module, inlinedSymbolName, cudie, prevScope, offset));
+                    symbols.push_back(FillSymbol(frame, module, obj, inlinedSymbolName, cudie, prevScope, offset));
                     prevScope = scope;
                 }
 
@@ -699,24 +847,16 @@ private:
         return symbols;
     }
 
-    Symbol FillSymbol(Frame frame, Dwfl_Module* module, const char* name, Dwarf_Die* cudie, Dwarf_Die* lastScope, Dwarf_Word mod_offset) {
+    Symbol FillSymbol(Frame frame, Dwfl_Module* module, ObjectFile* obj, const char* name, Dwarf_Die* cudie, Dwarf_Die* lastScope, Dwarf_Word mod_offset) {
         bool inlined = lastScope != nullptr;
         Symbol sym{
             .Frame = frame,
+            .Object = obj,
         };
 
         if (name) {
             sym.Function = cxx::abi::Demangle(name);
             spdlog::debug("Start resolve frame {}, inlined: {}", *sym.Function, inlined);
-        } else {
-            sym.Function = "??";
-        }
-
-        {
-            const char* fileName = dwfl_module_info(module, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
-            if (fileName) {
-                sym.Object = fileName;
-            }
         }
 
         SourceLocation location;
@@ -854,6 +994,7 @@ private:
     absl::flat_hash_map<Frame, SymbolList> SymbolCache_;
     absl::flat_hash_map<pid_t, std::string> ThreadNameCache_;
     absl::flat_hash_map<size_t, TraceInfo> Traces_;
+    absl::flat_hash_map<Dwfl_Module*, std::unique_ptr<ObjectFile>> Modules_;
 };
 
 #undef CHECK_DWFL

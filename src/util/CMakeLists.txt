@@ -7,6 +7,10 @@ set(HEADERS
 add_library(poorprof_util OBJECT ${SOURCES} ${HEADERS})
 
 target_link_libraries(poorprof_util
-    PRIVATE backward
+    PRIVATE backward ${LIBDW_LIBRARIES}
     PUBLIC
+)
+
+target_include_directories(poorprof_util
+    PRIVATE ${LIBDW_INCLUDE_DIRS}
 )
