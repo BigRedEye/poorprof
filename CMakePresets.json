@@ -20,14 +20,15 @@
       }
     },
     {
-      "name": "release-vcpkg-static",
+      "name": "release-vcpkg-alpine",
       "displayName": "Release vcpkg",
-      "description": "Release build using deps from vcpkg",
+      "description": "Release build using deps from vcpkg from ssytee",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release-vcpkg-static",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "CMAKE_TOOLCHAIN_FILE": "/tmp/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "FORCE_COLORED_OUTPUT": true,
         "POORPROF_STATIC_LIBC": true,
         "POORPROF_STATIC_LIBSTDCXX": true,
@@ -82,8 +83,8 @@
       "description": "Release build using deps from vcpkg"
     },
     {
-      "name": "release-vcpkg-static",
-      "configurePreset": "release-vcpkg-static",
+      "name": "release-vcpkg-alpine",
+      "configurePreset": "release-vcpkg-alpine",
       "displayName": "Release vcpkg static",
       "description": "Release build using deps from vcpkg"
     },
