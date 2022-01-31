@@ -3,10 +3,12 @@
   "name": "poorprof",
   "version-string": "0.1.0",
   "dependencies": [
-    "fmt",
+    {
+      "name": "abseil",
+      "features": ["cxx17"]
+    },
     "elfutils",
-    "abseil",
-    "spdlog",
-    "boost-iostreams"
+    "fmt",
+    "spdlog"
   ]
 }
