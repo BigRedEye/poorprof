@@ -3,3 +3,4 @@ Dockerfile
 docker/Dockerfile*
 .git
 .cache
+.github
