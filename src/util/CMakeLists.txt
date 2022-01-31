@@ -1,5 +1,8 @@
 set(SOURCES
+    align.cpp
     backward.cpp
+    ctrlc.cpp
+    demangle.cpp
 )
 set(HEADERS
 )
