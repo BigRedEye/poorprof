@@ -1,3 +1,9 @@
+#include "dw/gdb_index.h"
+#include "util/ctrlc.h"
+#include "util/defer.h"
+#include "util/demangle.h"
+#include "util/iterator.h"
+
 #include <cpparg/cpparg.h>
 
 #include <fmt/chrono.h>
@@ -9,8 +15,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/inlined_vector.h>
 #include <absl/hash/hash.h>
-
-#include <boost/iostreams/device/mapped_file.hpp>
 
 #include <dwarf.h>
 #include <elfutils/libdw.h>
@@ -36,244 +40,6 @@
 #include <system_error>
 #include <thread>
 #include <utility>
-
-#ifdef __linux__
-#include <fcntl.h>
-#include <sys/fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif // __linux__
-
-
-/// UTIL
-namespace util {
-
-class Error : public std::runtime_error {
-public:
-    template <typename ...Args>
-    Error(std::string_view fmt, Args&& ...args)
-        : std::runtime_error{fmt::vformat(fmt, fmt::make_format_args(std::forward<Args>(args)...))}
-    {}
-};
-
-} // namespace util
-
-// UTIL::ALGO
-
-namespace util {
-
-template <typename It>
-class IteratorRange {
-public:
-    IteratorRange(It begin, It end)
-        : Begin_{begin}
-        , End_{end}
-    {}
-
-    // NOLINTNEXTLINE
-    It begin() const {
-        return Begin_;
-    }
-
-    // NOLINTNEXTLINE
-    It end() const {
-        return End_;
-    }
-
-private:
-    It Begin_;
-    It End_;
-};
-
-template <typename It>
-IteratorRange(It, It) -> IteratorRange<It>;
-
-template <typename C>
-auto Reversed(C&& cont) {
-    return IteratorRange{cont.rbegin(), cont.rend()};
-}
-
-} // namespace util
-
-namespace util::ctrlc {
-
-namespace {
-
-std::atomic<bool> Stopped = false;
-std::atomic<int> SigIntsLeft = 0;
-
-} // namespace 
-
-void HandleSigInt(int maxtries) {
-    SigIntsLeft.store(maxtries);
-    ::signal(SIGINT, +[](int) {
-        if (SigIntsLeft.fetch_sub(1) <= 1) {
-            ::signal(SIGINT, SIG_DFL);
-        }
-        Stopped.store(true, std::memory_order_release);
-    });
-}
-
-bool WasInterrupted() {
-    return Stopped.load(std::memory_order_acquire);
-}
-
-} // namespace util::ctrlc
-
-namespace util::detail {
-
-struct Defer {
-};
-
-template <typename F>
-class DeferredFunctor {
-public:
-    DeferredFunctor(F func)
-        : Func_{std::move(func)}
-    {}
-
-    DeferredFunctor(const DeferredFunctor& rhs) = delete;
-    DeferredFunctor(DeferredFunctor&& rhs) noexcept = delete;
-
-    DeferredFunctor& operator=(const DeferredFunctor& rhs) = delete;
-    DeferredFunctor& operator=(DeferredFunctor&& rhs) noexcept = delete;
-
-    ~DeferredFunctor() {
-        Func_();
-    }
-
-private:
-    F Func_;
-};
-
-template <typename F>
-inline DeferredFunctor<F> operator<<=(const Defer&, F func) {
-    return DeferredFunctor<F>{std::move(func)};
-}
-
-} // namespace util::detail
-
-#define CAT2(a, b) a ## b
-#define CAT(a, b) CAT2(a, b)
-
-#define DEFER \
-    auto CAT(internalDeferDoNotUse, __LINE__) = ::util::detail::Defer{} <<= [&]()
-
-/// ABI
-#include <cxxabi.h>
-
-namespace cxx::abi {
-
-class MallocedBuffer {
-public:
-    static MallocedBuffer Allocate(size_t size) {
-        return MallocedBuffer{SafeMalloc(size), size};
-    }
-
-    static MallocedBuffer Acquire(char* ptr, size_t size) {
-        return MallocedBuffer{ptr, size};
-    }
-
-public:
-    MallocedBuffer(MallocedBuffer&& rhs) noexcept {
-        *this = std::move(rhs);
-    }
-
-    MallocedBuffer& operator=(MallocedBuffer&& rhs) noexcept {
-        std::swap(Begin_, rhs.Begin_);
-        std::swap(Size_, rhs.Size_);
-        return *this;
-    }
-
-    ~MallocedBuffer() {
-        ::free(Begin_);
-    }
-
-    std::pair<char*, size_t> UnsafeRelease() {
-        std::pair<char*, size_t> res;
-        res.first = std::exchange(Begin_, nullptr);
-        res.second = std::exchange(Size_, 0);
-        return res;
-    }
-
-public:
-    const char* Begin() const {
-        return Begin_;
-    }
-
-    char* Begin() {
-        return Begin_;
-    }
-
-    size_t Size() const {
-        return Size_;
-    }
-
-private:
-    static char* SafeMalloc(size_t size) {
-        char* res = static_cast<char*>(::malloc(size));
-        if (res == nullptr) {
-            throw std::bad_alloc{};
-        }
-        return res;
-    }
-
-private:
-    MallocedBuffer(char* ptr, size_t size)
-        : Begin_{ptr}
-        , Size_{size}
-    {}
-
-private:
-    char* Begin_ = nullptr;
-    size_t Size_ = 0;
-};
-
-bool ShouldDemangle(std::string_view symbol) {
-    return symbol.starts_with("_Z");
-}
-
-std::string Demangle(std::string_view symbol) {
-    // https://gcc.gnu.org/onlinedocs/libstdc++/libstdc++-html-USERS-4.3/a01696.html
-    enum EDemangleResult {
-        kSuceess = 0,
-        kBadAlloc = -1,
-        kInvalidMangledName = -2,
-        kInvalidArgument = -3,
-    };
-
-    static thread_local MallocedBuffer DemangleBuf = MallocedBuffer::Allocate(64);
-    auto [ptr, size] = DemangleBuf.UnsafeRelease();
-
-    int status = 0;
-    ptr = __cxxabiv1::__cxa_demangle(symbol.data(), ptr, &size, &status);
-    if (ptr) {
-        DemangleBuf = MallocedBuffer::Acquire(ptr, size);
-    }
-
-    switch (status) {
-    case kSuceess:
-        break;
-    case kBadAlloc:
-        throw std::bad_alloc{};
-    case kInvalidMangledName:
-        return std::string{symbol};
-    case kInvalidArgument:
-        throw util::Error{"Failed to demangle symbol name"};
-    }
-
-    return std::string{ptr};
-}
-
-void DemangleInplace(std::string& s) {
-    if (ShouldDemangle(s)) {
-        s = Demangle(s);
-    }
-}
-
-} // namespace cxx::abi
 
 class IUnwinder {
 public:
@@ -303,126 +69,6 @@ public:
         throw std::system_error{err, std::system_category()}; \
     }
 
-class GdbIndex {
-public:
-    explicit GdbIndex(const char* path, const GElf_Shdr& section) {
-        boost::iostreams::mapped_file in{path};
-        int fd = ::open(path, O_RDONLY);
-        if (fd == -1) {
-            throw std::system_error{errno, std::system_category()};
-        }
-        DEFER {
-            ::close(fd);
-        };
-
-        struct stat stat;
-        int res = ::stat(path, &stat);
-        void* ptr = ::mmap(nullptr, stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-        if (ptr == (void*)-1) {
-            throw std::system_error{errno, std::system_category()};
-        }
-        DEFER {
-            munmap(ptr, stat.st_size);
-        };
-
-        const char* begin = static_cast<const char*>(ptr);
-        ParseGdbIndex(begin, begin + section.sh_offset, section.sh_size);
-    }
-
-    ~GdbIndex() {
-        munmap(ptr_, size_);
-        close(fd_);
-    }
-
-    static std::optional<GdbIndex> OpenIndex(Dwfl_Module* mod, const char* path) {
-        std::optional<GElf_Shdr> gdbIndexSection;
-        IterateSections(mod, [&gdbIndexSection](const char* name, const GElf_Shdr& section) {
-            if (std::string_view{".gdb_index"} == name) {
-                gdbIndexSection = section;
-            }
-        });
-
-        if (!gdbIndexSection) {
-            spdlog::debug("Object {} does not contain gdb_index", path);
-            return std::nullopt;
-        }
-        if (path == nullptr) {
-            spdlog::warn("Failed to locate object file");
-            return std::nullopt;
-        }
-        spdlog::info("Found gdb_index for {}", path);
-
-        return std::make_optional<GdbIndex>(path, *gdbIndexSection);
-    }
-
-private:
-    template <typename F>
-    static void IterateSections(Dwfl_Module* mod, F&& cb) {
-        GElf_Addr bias;
-        Elf* elf = dwfl_module_getelf(mod, &bias);
-
-        GElf_Ehdr ehdr;
-        if (gelf_getehdr(elf, &ehdr) == nullptr) {
-            throw util::Error{"Failed to find ELF header"};
-        }
-        size_t shstrndx = 0;
-        if (elf_getshdrstrndx(elf, &shstrndx) != 0) {
-            throw util::Error{"Failed to find ELF section header string table"};
-        }
-        Elf_Scn* scn = nullptr;
-        while ((scn = elf_nextscn(elf, scn)) != nullptr) {
-            GElf_Shdr shdr;
-            gelf_getshdr(scn, &shdr);
-            const char* name = elf_strptr(elf, ehdr.e_shstrndx, shdr.sh_name);
-            cb(name, shdr);
-        }
-    }
-
-    static void ParseGdbIndex(const char* begin, const char* ptr, size_t size) {
-        using offset_type = std::uint32_t;
-
-        const char* cursor = ptr;
-        auto readOffset = [&]() mutable {
-            offset_type offset = 0;
-            std::memcpy(&offset, cursor, sizeof(offset_type));
-            cursor += sizeof(offset_type);
-            return offset;
-        };
-
-        offset_type version = readOffset();
-        spdlog::info("Found gdb index version {}", version);
-        offset_type cuListOffset = readOffset();
-        offset_type typesCuListOffset = readOffset();
-        offset_type addresAreaOffset = readOffset();
-        offset_type symbolTableOffset = readOffset();
-        offset_type constantPoolOffset = readOffset();
-
-        auto readUi64 = [&]() mutable {
-            std::uint64_t offset = 0;
-            std::memcpy(&offset, cursor, sizeof(offset_type));
-            cursor += sizeof(offset_type);
-            return offset;
-        };
-        cursor = begin + cuListOffset;
-
-        struct CULocation {
-            std::uint64_t DebugInfoOffset = 0;
-            std::uint64_t Length = 0;
-        };
-
-        auto numCus = (typesCuListOffset - cuListOffset) / sizeof(CULocation);
-        std::vector<CULocation> cus(numCus);
-        for (auto& cu : cus) {
-            cu.DebugInfoOffset = readUi64();
-            cu.Length = readUi64();
-        }
-        spdlog::info("Found {} CUs", numCus);
-    }
-
-private:
-    int Fd_ = -1;
-};
-
 class Unwinder : public IUnwinder {
     struct Frame {
         Dwarf_Addr InstructionPointer = 0;
@@ -451,7 +97,7 @@ class Unwinder : public IUnwinder {
         const char* File = nullptr;
         Dwarf_Addr Begin = 0;
         Dwarf_Addr End = 0;
-        std::optional<GdbIndex> Index;
+        std::optional<dw::GdbIndex> GdbIndex;
     };
 
     struct Symbol {
@@ -731,13 +377,25 @@ private:
             ObjectFile obj;
             obj.Name = dwfl_module_info(module, nullptr, &obj.Begin, &obj.End, nullptr, nullptr, &obj.File, nullptr);
             spdlog::info("Found module {} (@{})", obj.Name, obj.File);
-            auto&& objectFile = Modules_[module] = std::make_unique<ObjectFile>(obj);
+            obj.GdbIndex = GdbIndex::Open(module, obj.File);
+            Modules_[module] = std::make_unique<ObjectFile>(obj);
         }
         ObjectFile* obj = Modules_[module].get();
 
         Dwarf_Addr offset = 0;
-        Dwarf_Die* cudie = dwfl_module_addrdie(module, ip, &offset);
+        Dwarf_Die cudieStorage;
+        Dwarf_Die* cudie = nullptr;
+        if (getenv("POORPORF_ADDRDIE")) {
+            cudie = dwfl_module_addrdie(module, ip, &offset);
+        }
+        if (!cudie && obj->GdbIndex) {
+            // Clang does not generate .debug_aranges, so dwfl_module_addrdie can fail.
+            // Try to find CU DIE using gdb_index.
+            cudie = obj->GdbIndex->Lookup(ip, &cudieStorage);
+        }
         if (!cudie) {
+            // We failed to find CU DIE using .debug_aranges (dwfl_module_addrdie) and .gdb_index.
+            // Let's scan all CUs in the current module.
             while ((cudie = dwfl_module_nextcu(module, cudie, &offset))) {
                 Dwarf_Die die_mem;
                 Dwarf_Die *fundie = FindFunDieByPc(cudie, ip - offset, &die_mem);
@@ -772,8 +430,15 @@ private:
                 }
             }
         }
+        if (!cudie) {
+            // Give up.
+            spdlog::error("No CU DIE found for ip {:x}", ip);
+            return {{
+                .Frame = frame,
+            }};
+        }
 
-        spdlog::debug("Found CU DIE {:x} for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
+        spdlog::info("Found CU DIE {:x} for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
 
         Dwarf_Die* scopes = nullptr;
         int numScopes = dwarf_getscopes(cudie, ip - offset, &scopes);
@@ -809,7 +474,7 @@ private:
         }
 
         if (firstSymbolName) {
-            spdlog::debug("Found {} scopes for symbol {}", numScopes, cxx::abi::Demangle(firstSymbolName));
+            spdlog::debug("Found {} scopes for symbol {}", numScopes, util::Demangle(firstSymbolName));
         }
 
         SymbolList symbols;
@@ -855,7 +520,7 @@ private:
         };
 
         if (name) {
-            sym.Function = cxx::abi::Demangle(name);
+            sym.Function = util::Demangle(name);
             spdlog::debug("Start resolve frame {}, inlined: {}", *sym.Function, inlined);
         }
 
@@ -955,21 +620,17 @@ private:
     void FillDwflReport() {
         dwfl_report_begin(Dwfl_);
         if (CustomMaps_) {
-            spdlog::error("Start dwfl_linux_proc_maps_report (pid: {})", Pid_);
             FILE* maps = fopen(CustomMaps_->data(), "r");
+            DEFER {
+                fclose(maps);
+            };
             int code = dwfl_linux_proc_maps_report(Dwfl_, maps);
-            fclose(maps);
-            spdlog::info("Finish dwfl_linux_proc_maps_report, code: {}", code);
             CHECK_DWFL(code);
         } else {
-            spdlog::error("Start dwfl_linux_proc_report (pid: {})", Pid_);
             int code = dwfl_linux_proc_report(Dwfl_, Pid_);
-            spdlog::info("Finish dwfl_linux_proc_report, code: {}", code);
             CHECK_DWFL(code);
         }
-        spdlog::error("Start dwfl_report_end");
         CHECK_DWFL(dwfl_report_end(Dwfl_, nullptr, nullptr));
-        spdlog::error("Finish FillDwflReport");
     }
 
     void AttachToProcess() {
@@ -1073,7 +734,7 @@ int Main(int argc, const char* argv[]) {
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
     spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f [%^%l%$] %v");
 
-    util::ctrlc::HandleSigInt(3);
+    util::HandleSigInt(3);
 
     Options options = ParseOptions(argc, argv);
     spdlog::info("Going to trace process {}", options.Pid);
@@ -1084,7 +745,7 @@ int Main(int argc, const char* argv[]) {
     auto sleep_delta = options.Frequency ? std::chrono::seconds{1} / options.Frequency : std::chrono::seconds{0};
     size_t max = options.MaxSamples.value_or(std::numeric_limits<size_t>::max());
     for (size_t iter = 1; iter <= max; ++iter) {
-        if (util::ctrlc::WasInterrupted()) {
+        if (util::WasInterrupted()) {
             spdlog::info("Stopped by SIGINT");
             break;
         }

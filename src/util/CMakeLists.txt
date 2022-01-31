@@ -11,7 +11,7 @@ add_library(poorprof_util OBJECT ${SOURCES} ${HEADERS})
 
 target_link_libraries(poorprof_util
     PRIVATE backward ${LIBDW_LIBRARIES}
-    PUBLIC
+    PUBLIC fmt::fmt
 )
 
 target_include_directories(poorprof_util
