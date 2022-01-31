@@ -3,8 +3,11 @@
   "name": "poorprof",
   "version-string": "0.1.0",
   "dependencies": [
+    {
+      "name": "abseil",
+      "features": ["cxx17"]
+    },
     "fmt",
-    "abseil",
     "spdlog"
   ]
 }
