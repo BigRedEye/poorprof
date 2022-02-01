@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -384,10 +385,7 @@ private:
 
         Dwarf_Addr offset = 0;
         Dwarf_Die cudieStorage;
-        Dwarf_Die* cudie = nullptr;
-        if (getenv("POORPORF_ADDRDIE")) {
-            cudie = dwfl_module_addrdie(module, ip, &offset);
-        }
+        Dwarf_Die* cudie = dwfl_module_addrdie(module, ip, &offset);
         if (!cudie && obj->GdbIndex) {
             // Clang does not generate .debug_aranges, so dwfl_module_addrdie can fail.
             // Try to find CU DIE using gdb_index.
@@ -730,7 +728,11 @@ Options ParseOptions(int argc, const char* argv[]) {
 }
 
 int Main(int argc, const char* argv[]) {
-    spdlog::set_level(spdlog::level::info);
+    if (const char* env = std::getenv("POORPROF_LOG_LEVEL")) {
+        spdlog::set_level(spdlog::level::from_str(env));
+    } else {
+        spdlog::set_level(spdlog::level::info);
+    }
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
     spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f [%^%l%$] %v");
 
