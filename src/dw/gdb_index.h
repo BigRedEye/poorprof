@@ -201,8 +201,21 @@ public:
 
         offset_type cuIdx = Addresses_[*it].CUIndex;
         CULocation cu = CULocations_[cuIdx];
-        Dwarf_Die* die = dwarf_offdie(Dwarf_, cu.Offset, result);
-        return die;
+
+        // Locate this CU via libdw 
+        Dwarf_Off nextOffset;
+        size_t headerSize = 0;
+        int res = dwarf_nextcu(Dwarf_, cu.Offset, &nextOffset, &headerSize, nullptr, nullptr, nullptr);
+        if (res != 0) {
+            spdlog::error("Malformed .gdb_index: {}", dwarf_errmsg(res));
+            return nullptr;
+        }
+
+        return dwarf_offdie(Dwarf_, cu.Offset + headerSize, result);
+    }
+
+    Dwarf_Addr DwarfBias() const {
+        return DwarfBias_;
     }
 
 private:
@@ -253,7 +266,7 @@ private:
 private:
     Dwfl_Module* Module_ = nullptr;
     Elf_Scn* Section_ = nullptr;
-    Dwarf_Addr DwarfBias_ = 0;
+    Dwarf_Addr DwarfBias_ = 42;
     Dwarf* Dwarf_ = nullptr;
     Dwarf_Addr ModuleMappingBegin_ = 0;
     Dwarf_Addr ModuleMappingEnd_ = 0;
