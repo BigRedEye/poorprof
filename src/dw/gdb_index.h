@@ -189,7 +189,7 @@ public:
 
     Dwarf_Die* Lookup(Dwarf_Addr address, Dwarf_Die* result) const {
         ENSURE(address >= ModuleMappingBegin_ && address < ModuleMappingEnd_);
-        address -= ModuleMappingBegin_;
+        address -= DwarfBias_;
 
         auto range = util::xrange<u64>(Addresses_.size());
         auto it = util::LowerBoundBy(range, static_cast<u64>(address), [this](size_t idx) {
@@ -205,13 +205,15 @@ public:
         // Locate this CU via libdw 
         Dwarf_Off nextOffset;
         size_t headerSize = 0;
-        int res = dwarf_nextcu(Dwarf_, cu.Offset, &nextOffset, &headerSize, nullptr, nullptr, nullptr);
+        int res = dwarf_nextcu(Dwarf_, 0, &nextOffset, &headerSize, nullptr, nullptr, nullptr);
         if (res != 0) {
             spdlog::error("Malformed .gdb_index: {}", dwarf_errmsg(res));
             return nullptr;
         }
 
-        return dwarf_offdie(Dwarf_, cu.Offset + headerSize, result);
+        Dwarf_Die* cudie = dwarf_offdie(Dwarf_, cu.Offset + headerSize, result);
+        spdlog::debug("Found CU using gdb index, offset: {}, header: {}, total: {}", cu.Offset, headerSize, dwarf_dieoffset(cudie));
+        return cudie;
     }
 
     Dwarf_Addr DwarfBias() const {

@@ -441,8 +441,11 @@ private:
         }
 
         int tag = dwarf_tag(cudie);
+        ENSURE(tag == DW_TAG_compile_unit || tag == DW_TAG_partial_unit);
+
+        const char* cuName = dwarf_diename(cudie);
         Dwarf_Off dwoffset = dwarf_dieoffset(cudie);
-        spdlog::info("Found CU DIE {:x} (tag: {}, offset: {}) for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, tag, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
+        spdlog::info("Found CU DIE {:x} (name: {}, offset: {}) for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, cuName, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
 
         Dwarf_Die* scopes = nullptr;
         int numScopes = dwarf_getscopes(cudie, ip - offset, &scopes);
