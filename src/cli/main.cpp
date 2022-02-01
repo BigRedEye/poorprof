@@ -145,7 +145,7 @@ public:
     void Unwind() override {
         dwfl_getthreads(Dwfl_, +[](Dwfl_Thread* thread, void* that) -> int {
             static_cast<Unwinder*>(that)->HandleThread(thread);
-            return DWARF_CB_OK;
+            return util::WasInterrupted() ? DWARF_CB_ABORT : DWARF_CB_OK;
         }, this);
     }
 
@@ -159,7 +159,7 @@ public:
     }
 
 private:
-    using FrameList = absl::InlinedVector<Frame, 128>;
+    using FrameList = absl::InlinedVector<Frame, 64>;
 
     struct TraceInfo {
         size_t HitCount = 0;
