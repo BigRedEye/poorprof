@@ -164,22 +164,22 @@ public:
     }
 
     static std::optional<GdbIndex> Open(Dwfl_Module* mod, const char* path) {
-        Elf_Scn* gdbIndexSection = nullptr;
-        IterateSections(mod, [&gdbIndexSection](const char* name, Elf_Scn* section) {
-            if (std::string_view{".gdb_index"} == name) {
-                gdbIndexSection = section;
-                return true;
-            }
-            return false;
-        });
-
-        if (!gdbIndexSection) {
-            spdlog::debug("Object {} does not contain gdb_index", path);
-            return std::nullopt;
-        }
-        spdlog::info("Found gdb_index for {}", path ? path : "<nil>");
-
         try {
+            Elf_Scn* gdbIndexSection = nullptr;
+            IterateSections(mod, [&gdbIndexSection](const char* name, Elf_Scn* section) {
+                if (std::string_view{".gdb_index"} == name) {
+                    gdbIndexSection = section;
+                    return true;
+                }
+                return false;
+            });
+
+            if (!gdbIndexSection) {
+                spdlog::debug("Object {} does not contain gdb_index", path);
+                return std::nullopt;
+            }
+            spdlog::info("Found gdb_index for {}", path ? path : "<nil>");
+
             return std::make_optional<GdbIndex>(mod, gdbIndexSection);
         } catch (const std::exception& e) {
             spdlog::error("Failed to load gdb_index for {}: {}", path, e.what());
