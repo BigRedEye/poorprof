@@ -104,7 +104,7 @@ class Unwinder : public IUnwinder {
     struct Symbol {
         struct Frame Frame;
 
-        std::optional<ObjectFile*> Object;
+        ObjectFile* Object = nullptr;
         std::optional<std::string> Function;
         std::optional<SourceLocation> Location;
         bool Inlined = false;
@@ -216,9 +216,8 @@ private:
             const SymbolList& symbols = ResolveFrame(frame);
             for (const Symbol& sym : util::Reversed(symbols)) {
                 if (!sym.Function) {
-                    if (sym.Object) {
-                        ObjectFile* file = *sym.Object;
-                        fmt::format_to(buf, ";{}+{:#x}", file->File, sym.Frame.InstructionPointerAdjusted() - file->Begin);
+                    if (auto* obj = sym.Object; obj && obj->File) {
+                        fmt::format_to(buf, ";{}+{:#x}", obj->File, sym.Frame.InstructionPointerAdjusted() - obj->Begin);
                     } else {
                         fmt::format_to(buf, ";{:#018x}", sym.Frame.InstructionPointerAdjusted());
                     }
@@ -234,6 +233,8 @@ private:
                             fmt::format_to(buf, ":{}", loc->Column);
                         }
                     }
+                } else if (auto* obj = sym.Object; obj && obj->File) {
+                    fmt::format_to(buf, " at {}", sym.Object->File);
                 }
             }
         }
@@ -402,6 +403,7 @@ private:
                 }
             }
         }
+        // Disabled temporarily
         if (false && !cudie) {
             // If it's still not enough, lets dive deeper in the shit, and try
             // to save the world again: for every compilation unit, we will
@@ -431,9 +433,8 @@ private:
         if (!cudie) {
             // Give up.
             spdlog::error("No CU DIE found for ip {:x}", ip);
-            return {{
-                .Frame = frame,
-            }};
+            const char* symbolName = dwfl_module_addrname(module, ip);
+            return {FillSymbol(frame, module, obj, symbolName, nullptr, nullptr, offset)};
         }
 
         spdlog::info("Found CU DIE {:x} for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
@@ -519,7 +520,11 @@ private:
 
         if (name) {
             sym.Function = util::Demangle(name);
-            spdlog::debug("Start resolve frame {}, inlined: {}", *sym.Function, inlined);
+            spdlog::debug("Start resolve frame {}, inlined: {}, cudie: {}", *sym.Function, inlined, (uintptr_t)cudie);
+        }
+
+        if (!cudie) {
+            return sym;
         }
 
         SourceLocation location;
@@ -636,7 +641,7 @@ private:
     }
 
     void ValidateAttachedPid() {
-        if (pid_t pid = dwfl_pid(Dwfl_); pid != Pid_) {
+        if (pid_t pid = dwfl_pid(Dwfl_); pid <= 1) {
             throw util::Error{"Invalid pid {}", pid};
         }
     }
