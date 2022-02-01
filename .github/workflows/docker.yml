@@ -53,3 +53,34 @@ jobs:
           outputs: type=local,dest=.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Tar files
+        run: tar czf poorprof-latest-x86_64-linux-musl.tar.gz bin README.md LICENSE
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: poorprof-latest-x86_64-linux-musl
+          path: poorprof-latest-x86_64-linux-musl.tar.gz
+
+  publish-pre-release:
+    # if: github.event_name != 'pull_request'
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: poorprof-latest-x86_64-linux-musl
+          path: artifacts
+
+      - name: Create pre-release
+        uses: marvinpinto/action-automatic-releases@v1
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: true
+          title: "Development Build"
+          files: |
+            artifacts/*
