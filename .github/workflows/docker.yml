@@ -64,7 +64,7 @@ jobs:
           path: poorprof-latest-x86_64-linux-musl.tar.gz
 
   publish-pre-release:
-    # if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request'
     needs: build-and-push-image
     runs-on: ubuntu-latest
 
