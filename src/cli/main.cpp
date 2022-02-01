@@ -251,6 +251,7 @@ private:
         std::string name;
         std::getline(input, name);
 
+        name = fmt::format("{};{}", tid, name);
         return ThreadNameCache_[tid] = name;
 #else
         return "<unknown thread>";
@@ -391,6 +392,8 @@ private:
             // Clang does not generate .debug_aranges, so dwfl_module_addrdie can fail.
             // Try to find CU DIE using gdb_index.
             cudie = obj->GdbIndex->Lookup(ip, &cudieStorage);
+            offset = obj->GdbIndex->DwarfBias();
+            spdlog::info("Lookup in gdb index: {:x}, offset: {}", (uintptr_t)cudie, offset);
         }
         if (!cudie) {
             // We failed to find CU DIE using .debug_aranges (dwfl_module_addrdie) and .gdb_index.
@@ -437,7 +440,9 @@ private:
             return {FillSymbol(frame, module, obj, symbolName, nullptr, nullptr, offset)};
         }
 
-        spdlog::info("Found CU DIE {:x} for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
+        int tag = dwarf_tag(cudie);
+        Dwarf_Off dwoffset = dwarf_dieoffset(cudie);
+        spdlog::info("Found CU DIE {:x} (tag: {}, offset: {}) for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, tag, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
 
         Dwarf_Die* scopes = nullptr;
         int numScopes = dwarf_getscopes(cudie, ip - offset, &scopes);
