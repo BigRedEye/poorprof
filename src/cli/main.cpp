@@ -42,12 +42,20 @@
 #include <thread>
 #include <utility>
 
-class IUnwinder {
-public:
-    virtual ~IUnwinder() = default;
+namespace poorprof {
 
-    virtual void Unwind() = 0;
+struct Options {
+    pid_t Pid = 0;
+    std::optional<std::filesystem::path> DebugInfo;
+    std::optional<std::filesystem::path> CustomMaps;
+
+    bool ThreadNames = false;
+    bool LineNumbers = false;
+    double Frequency = 0.0;
+    std::optional<size_t> MaxSamples;
 };
+
+} // namespace poorprof
 
 namespace poorprof::dw {
 
@@ -70,7 +78,7 @@ public:
         throw std::system_error{err, std::system_category()}; \
     }
 
-class Unwinder : public IUnwinder {
+class Unwinder {
     struct Frame {
         Dwarf_Addr InstructionPointer = 0;
         bool IsActivation = false;
@@ -113,10 +121,12 @@ class Unwinder : public IUnwinder {
     using SymbolList = absl::InlinedVector<Symbol, 2>;
 
 public:
-    Unwinder(pid_t pid, std::optional<std::filesystem::path> debuginfo = std::nullopt, std::optional<std::filesystem::path> maps = std::nullopt)
-        : Pid_{pid}
-        , CustomMaps_{std::move(maps)}
-        , DebugInfo_{std::move(debuginfo)}
+public:
+    Unwinder(Options opts)
+        : Options_{std::move(opts)}
+        , Pid_{Options_.Pid}
+        , CustomMaps_{Options_.CustomMaps}
+        , DebugInfo_{Options_.DebugInfo}
         , DebugInfoPath_{DebugInfo_ ? DebugInfo_->data() : nullptr}
         , Callbacks_{
             .find_elf = dwfl_linux_proc_find_elf,
@@ -142,7 +152,7 @@ public:
         }
     }
 
-    void Unwind() override {
+    void Unwind() {
         dwfl_getthreads(Dwfl_, +[](Dwfl_Thread* thread, void* that) -> int {
             static_cast<Unwinder*>(that)->HandleThread(thread);
             return util::WasInterrupted() ? DWARF_CB_ABORT : DWARF_CB_OK;
@@ -234,7 +244,7 @@ private:
 
                 if (auto& loc = sym.Location) {
                     fmt::format_to(buf, " at {}", loc->File);
-                    if (loc->Line > 0) {
+                    if (Options_.LineNumbers && loc->Line > 0) {
                         fmt::format_to(buf, ":{}", loc->Line);
                         if (loc->Column > 0) {
                             fmt::format_to(buf, ":{}", loc->Column);
@@ -555,11 +565,13 @@ private:
             } else {
                 location.File = "<<dwarf_getsrcfiles>>";
             }
-            if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_line, &attr), &val) == 0) {
-                location.Line = val;
-            }
-            if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_column, &attr), &val) == 0) {
-                location.Column = val;
+            if (Options_.LineNumbers) {
+                if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_line, &attr), &val) == 0) {
+                    location.Line = val;
+                }
+                if (dwarf_formudata(dwarf_attr(lastScope, DW_AT_call_column, &attr), &val) == 0) {
+                    location.Column = val;
+                }
             }
         } else {
             Dwarf_Word ip = frame.InstructionPointerAdjusted() - mod_offset; 
@@ -576,14 +588,18 @@ private:
                 } else {
                     spdlog::info("dwarf_linesrc failed");
                 }
-                if (dwarf_lineno(line, &location.Line) < 0) {
-                    spdlog::info("dwarf_lineno failed");
-                }
-                if (dwarf_linecol(line, &location.Column) < 0) {
-                    spdlog::info("dwarf_linecol failed");
+                if (Options_.LineNumbers) {
+                    if (dwarf_lineno(line, &location.Line) < 0) {
+                        spdlog::info("dwarf_lineno failed");
+                    }
+                    if (dwarf_linecol(line, &location.Column) < 0) {
+                        spdlog::info("dwarf_linecol failed");
+                    }
                 }
             } else if (Dwfl_Line* line = dwfl_module_getsrc(module, ip)) {
-                const char* name = dwfl_lineinfo(line, nullptr, &location.Line, &location.Column, nullptr, nullptr);
+                int* linePtr = Options_.LineNumbers ? &location.Line : nullptr;
+                int* columnPtr = Options_.LineNumbers ? &location.Column : nullptr;
+                const char* name = dwfl_lineinfo(line, nullptr, linePtr, columnPtr, nullptr, nullptr);
                 if (name) {
                     location.File = name;
                 }
@@ -663,6 +679,7 @@ private:
     }
 
 private:
+    Options Options_;
     pid_t Pid_ = 0;
     std::optional<std::string> CustomMaps_;
     std::optional<std::string> DebugInfo_;
@@ -682,16 +699,6 @@ private:
 } // namespace poorprof::dw
 
 namespace poorprof {
-
-struct Options {
-    pid_t Pid = 0;
-    std::optional<std::filesystem::path> DebugInfo;
-    std::optional<std::filesystem::path> CustomMaps;
-
-    bool ThreadNames = false;
-    double Frequency = 0.0;
-    std::optional<size_t> MaxSamples;
-};
 
 Options ParseOptions(int argc, const char* argv[]) {
     Options options;
@@ -717,6 +724,11 @@ Options ParseOptions(int argc, const char* argv[]) {
         .description("Collect samples at this frequency")
         .default_value(0)
         .store(options.Frequency);
+
+    parser
+        .add('l', "lines")
+        .description("Show line numbers in output")
+        .flag(options.LineNumbers);
 
     parser
         .add('L', "limit")
@@ -762,7 +774,7 @@ int Main(int argc, const char* argv[]) {
     Options options = ParseOptions(argc, argv);
     spdlog::info("Going to trace process {}", options.Pid);
 
-    poorprof::dw::Unwinder unwinder{options.Pid, options.DebugInfo, options.CustomMaps};
+    poorprof::dw::Unwinder unwinder{options};
 
     auto begin = std::chrono::high_resolution_clock::now();
     auto sleep_delta = options.Frequency ? std::chrono::seconds{1} / options.Frequency : std::chrono::seconds{0};
