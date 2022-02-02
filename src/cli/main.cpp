@@ -152,8 +152,10 @@ public:
     void DumpTraces() {
         size_t numHits = 0;
         for (auto&& [_, trace] : Traces_) {
-            fmt::print("{} {}\n", trace.ResolvedTrace, trace.HitCount);
-            numHits += trace.HitCount;
+            for (auto&& [tid, count] : trace.HitCount) {
+                fmt::print("{}{} {}\n", ThreadName(tid), trace.ResolvedTrace, count);
+                numHits += count;
+            }
         }
         spdlog::info("Dumped {} different stacktraces with {} samples", Traces_.size(), numHits);
     }
@@ -162,7 +164,7 @@ private:
     using FrameList = absl::InlinedVector<Frame, 64>;
 
     struct TraceInfo {
-        size_t HitCount = 0;
+        absl::flat_hash_map<pid_t, u64> HitCount;
         std::string ResolvedTrace;
     };
 
@@ -194,17 +196,22 @@ private:
         spdlog::debug("Found {} frames", frames.size());
 
         TraceInfo& trace = Traces_[absl::Hash<FrameList>{}(frames)];
-        if (trace.HitCount++ > 0) {
-            return;
+        if (trace.HitCount.empty()) {
+            trace.ResolvedTrace = ResolveTrace(frames);
         }
-
-        trace.ResolvedTrace = ResolveTrace(tid, frames);
+        if (trace.HitCount[tid]++ == 0) {
+            RegisterThread(tid);
+        }
     }
 
-    std::string ResolveTrace(pid_t tid, std::span<Frame> frames) {
+    void RegisterThread(pid_t pid) {
+        // Populate thread name cache
+        [[maybe_unused]] auto name = ThreadName(pid);
+    }
+
+    std::string ResolveTrace(std::span<Frame> frames) {
         fmt::memory_buffer traceBuf;
         auto buf = std::back_inserter(traceBuf);
-        fmt::format_to(buf, "{}", ThreadName(tid));
 
         unsigned frameNumber = 0;
         for (Frame frame : util::Reversed(frames)) {
@@ -251,7 +258,7 @@ private:
         std::string name;
         std::getline(input, name);
 
-        name = fmt::format("{};{}", tid, name);
+        name = fmt::format("{}", name);
         return ThreadNameCache_[tid] = name;
 #else
         return "<unknown thread>";
