@@ -402,7 +402,9 @@ private:
             offset = obj->GdbIndex->DwarfBias();
             spdlog::info("Lookup in gdb index: {:x}, offset: {}", (uintptr_t)cudie, offset);
         }
-        if (!cudie) {
+
+        // Heavy full scans are disabled temporarily
+        if (false && !cudie) {
             // We failed to find CU DIE using .debug_aranges (dwfl_module_addrdie) and .gdb_index.
             // Let's scan all CUs in the current module.
             while ((cudie = dwfl_module_nextcu(module, cudie, &offset))) {
@@ -413,7 +415,6 @@ private:
                 }
             }
         }
-        // Disabled temporarily
         if (false && !cudie) {
             // If it's still not enough, lets dive deeper in the shit, and try
             // to save the world again: for every compilation unit, we will
