@@ -12,6 +12,9 @@ list(APPEND POORPROF_PRIVATE_LIBRARIES absl::flat_hash_map)
 find_package(spdlog REQUIRED)
 list(APPEND POORPROF_PRIVATE_LIBRARIES spdlog::spdlog)
 
+find_package(re2 REQUIRED)
+list(APPEND POORPROF_PRIVATE_LIBRARIES re2::re2)
+
 # set(Boost_USE_STATIC_LIBS ON)
 # find_package(Boost REQUIRED COMPONENTS iostreams)
 # list(APPEND POORPROF_PRIVATE_LIBRARIES Boost::iostreams)

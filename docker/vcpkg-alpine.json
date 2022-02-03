@@ -8,6 +8,7 @@
       "features": ["cxx17"]
     },
     "fmt",
-    "spdlog"
+    "spdlog",
+    "re2"
   ]
 }

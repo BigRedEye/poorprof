@@ -16,6 +16,8 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/hash/hash.h>
 
+#include <re2/re2.h>
+
 #include <dwarf.h>
 #include <elfutils/libdw.h>
 #include <elfutils/libdwelf.h>
@@ -49,6 +51,7 @@ struct Options {
     std::optional<std::filesystem::path> DebugInfo;
     std::optional<std::filesystem::path> CustomMaps;
 
+    std::optional<std::string> ThreadRegexp;
     bool ThreadNames = false;
     bool LineNumbers = false;
     double Frequency = 0.0;
@@ -134,6 +137,9 @@ public:
             .debuginfo_path = &DebugInfoPath_,
         }
     {
+        if (Options_.ThreadRegexp) {
+            ThreadNamesFilter_.emplace(*Options_.ThreadRegexp);
+        }
         InitializeDwfl();
         FillDwflReport();
         AttachToProcess();
@@ -180,6 +186,9 @@ private:
 
     void HandleThread(Dwfl_Thread* thread) {
         pid_t tid = dwfl_thread_tid(thread);
+        if (ThreadNamesFilter_ && !RE2::PartialMatch(ThreadName(tid), *ThreadNamesFilter_)) {
+            return;
+        }
 
         FrameList frames;
         int err = dwfl_thread_getframes(thread, +[](Dwfl_Frame* raw, void* arg) -> int {
@@ -683,6 +692,7 @@ private:
     pid_t Pid_ = 0;
     std::optional<std::string> CustomMaps_;
     std::optional<std::string> DebugInfo_;
+    std::optional<re2::RE2> ThreadNamesFilter_;
     char* DebugInfoPath_ = nullptr;
 
     Dwfl_Callbacks Callbacks_;
@@ -718,6 +728,11 @@ Options ParseOptions(int argc, const char* argv[]) {
         .add('T', "thread-names")
         .description("Show thread names")
         .flag(options.ThreadNames);
+
+    parser
+        .add('R', "thread-regexp")
+        .description("Regexp (in RE2 syntax) to filter thread names")
+        .store<std::string>(options.ThreadRegexp);
 
     parser
         .add('F', "freq")

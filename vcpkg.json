@@ -9,6 +9,7 @@
     },
     "elfutils",
     "fmt",
-    "spdlog"
+    "spdlog",
+    "re2"
   ]
 }
