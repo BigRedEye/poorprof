@@ -422,10 +422,10 @@ private:
             spdlog::info("Lookup in gdb index: {:x}, offset: {}", (uintptr_t)cudie, offset);
         }
 
-        // Heavy full scans are disabled temporarily
-        if (false && !cudie) {
+        if (!cudie) {
             // We failed to find CU DIE using .debug_aranges (dwfl_module_addrdie) and .gdb_index.
             // Let's scan all CUs in the current module.
+            // TODO(BigRedEye): build CU index on first search failure
             while ((cudie = dwfl_module_nextcu(module, cudie, &offset))) {
                 Dwarf_Die die_mem;
                 Dwarf_Die *fundie = FindFunDieByPc(cudie, ip - offset, &die_mem);
@@ -462,7 +462,7 @@ private:
         }
         if (!cudie) {
             // Give up.
-            spdlog::error("No CU DIE found for ip {:x}", ip);
+            spdlog::warn("No CU DIE found for ip {:x}", ip);
             const char* symbolName = dwfl_module_addrname(module, ip);
             return {FillSymbol(frame, module, obj, symbolName, nullptr, nullptr, offset)};
         }
