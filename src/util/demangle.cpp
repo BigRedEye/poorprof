@@ -86,7 +86,7 @@ std::string DemangleImpl(std::string_view symbol) {
         kInvalidArgument = -3,
     };
 
-    static thread_local MallocedBuffer DemangleBuf = MallocedBuffer::Allocate(64);
+    static thread_local MallocedBuffer DemangleBuf = MallocedBuffer::Allocate(1024);
     auto [ptr, size] = DemangleBuf.UnsafeRelease();
 
     int status = 0;
