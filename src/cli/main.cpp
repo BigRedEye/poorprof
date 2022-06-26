@@ -3,6 +3,7 @@
 #include "util/defer.h"
 #include "util/demangle.h"
 #include "util/iterator.h"
+#include "util/literals.h"
 
 #include <cpparg/cpparg.h>
 
@@ -50,6 +51,7 @@ struct Options {
     pid_t Pid = 0;
     std::optional<std::filesystem::path> DebugInfo;
     std::optional<std::filesystem::path> CustomMaps;
+    std::chrono::milliseconds ReportInterval = 1s;
 
     std::optional<std::string> ThreadRegexp;
     bool ThreadNames = false;
@@ -782,7 +784,7 @@ int Main(int argc, const char* argv[]) {
         spdlog::set_level(spdlog::level::info);
     }
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
-    spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f [%^%l%$] %v");
+    spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f {%^%l%$} %v");
 
     util::HandleSigInt(3);
 
@@ -791,8 +793,10 @@ int Main(int argc, const char* argv[]) {
 
     poorprof::dw::Unwinder unwinder{options};
 
-    auto begin = std::chrono::high_resolution_clock::now();
+    auto begin = std::chrono::steady_clock::now();
+    auto nextReportTime = begin;
     auto sleep_delta = options.Frequency ? std::chrono::seconds{1} / options.Frequency : std::chrono::seconds{0};
+
     size_t max = options.MaxSamples.value_or(std::numeric_limits<size_t>::max());
     for (size_t iter = 1; iter <= max; ++iter) {
         if (util::WasInterrupted()) {
@@ -800,11 +804,11 @@ int Main(int argc, const char* argv[]) {
             break;
         }
 
-        auto start = std::chrono::steady_clock::now();
         unwinder.Unwind();
 
-        if (iter % 10000 == 0) {
-            auto now = std::chrono::high_resolution_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        if (now > nextReportTime) {
+            nextReportTime = now + options.ReportInterval;
             auto delta = std::chrono::duration_cast<std::chrono::duration<double>>(now - begin).count();
             spdlog::info("Collected {} traces in {:.3f}s ({:.3f} traces/s)", iter, delta, iter / delta);
         }
