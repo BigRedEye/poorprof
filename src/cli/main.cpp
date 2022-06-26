@@ -216,7 +216,7 @@ private:
 
         TraceInfo& trace = Traces_[absl::Hash<FrameList>{}(frames)];
         if (trace.HitCount.empty()) {
-            trace.ResolvedTrace = ResolveTrace(frames);
+            trace.ResolvedTrace = FormatTrace(frames);
         }
         if (trace.HitCount[tid]++ == 0) {
             RegisterThread(tid);
@@ -228,7 +228,7 @@ private:
         [[maybe_unused]] auto name = ThreadName(pid);
     }
 
-    std::string ResolveTrace(std::span<Frame> frames) {
+    std::string FormatTrace(std::span<Frame> frames) {
         fmt::memory_buffer traceBuf;
         auto buf = std::back_inserter(traceBuf);
 
@@ -472,7 +472,7 @@ private:
 
         const char* cuName = dwarf_diename(cudie);
         Dwarf_Off dwoffset = dwarf_dieoffset(cudie);
-        spdlog::info("Found CU DIE {:x} (name: {}, offset: {}) for ip {:x} with bias {:x} (addr: {:x})", (uintptr_t)cudie, cuName, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
+        spdlog::info("Found CU DIE {:#x} (name: {}, offset: {:#x}) for ip {:#x} with bias {:#x} (addr: {:#x})", (uintptr_t)cudie, cuName, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
 
         Dwarf_Die* scopes = nullptr;
         int numScopes = dwarf_getscopes(cudie, ip - offset, &scopes);
