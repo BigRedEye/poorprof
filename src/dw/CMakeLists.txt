@@ -1,10 +1,12 @@
 set(
     SOURCES
+    debuginfod.cpp
     dw.cpp
 )
 
 set(
     HEADERS
+    debuginfod.h
     dw.h
 )
 
@@ -16,7 +18,7 @@ set_target_properties(poorprof_dw PROPERTIES
 )
 
 target_link_libraries(poorprof_dw
-    PUBLIC ${LIBDWARF_LIBRARIES}
+    PUBLIC ${LIBDWARF_LIBRARIES} ${LIBDEBUGINFOD_LIBRARIES}
     PUBLIC ${CMAKE_DL_LIBS}
 )
 

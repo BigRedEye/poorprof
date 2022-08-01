@@ -1,7 +1,9 @@
+#include "dw/debuginfod.h"
 #include "dw/gdb_index.h"
 #include "util/ctrlc.h"
 #include "util/defer.h"
 #include "util/demangle.h"
+#include "util/error.h"
 #include "util/iterator.h"
 #include "util/literals.h"
 
@@ -76,11 +78,11 @@ public:
 };
 
 #define CHECK_DWFL(...) \
-    if (int err = (__VA_ARGS__); err != 0) { \
+    if (auto err = (__VA_ARGS__); err != 0) { \
         if (err < 0) { \
             throw DwflError{}; \
         } \
-        throw std::system_error{err, std::system_category()}; \
+        throw std::system_error{static_cast<int>(err), std::system_category()}; \
     }
 
 class Unwinder {
@@ -125,7 +127,45 @@ class Unwinder {
 
     using SymbolList = absl::InlinedVector<Symbol, 2>;
 
-public:
+    static int FindDebugInfo(Dwfl_Module* mod, void** userdata,
+            const char* modname, Dwarf_Addr base,
+            const char* file_name, const char* debuglink_name,
+            GElf_Word debuglink_crc, char** debuginfo_filename)
+    {
+        spdlog::info("FindDebugInfo for module {} (file_name: {})", modname, file_name);
+
+        // Try to use standard search facility
+        int fd = dwfl_standard_find_debuginfo(mod, userdata, modname, base, file_name, debuglink_name, debuglink_crc, debuginfo_filename);
+        if (fd >= 0) {
+            return fd;
+        }
+
+        // Try to find debuginfo using debuginfod 
+        if (mod == nullptr) {
+            return -1;
+        }
+
+        GElf_Addr bias;
+        const unsigned char* buildIdBytes;
+        int len = dwfl_module_build_id(mod, &buildIdBytes, &bias);
+        if (len < 0) {
+            throw DwflError{};
+        }
+        std::string buildId(reinterpret_cast<const char*>(buildIdBytes), len);
+
+        if (!userdata) {
+            spdlog::error("Module {} is not registered in the unwinder", modname);
+            return -1;
+        }
+        Unwinder* that = static_cast<Unwinder*>(*userdata);
+        std::optional<int> res = that->RemoteDebugInfo_.FindDebugInfo(buildId);
+        if (res) {
+            return *res;
+        }
+
+        return -1;
+    }
+
 public:
     Unwinder(Options opts)
         : Options_{std::move(opts)}
@@ -135,7 +175,7 @@ public:
         , DebugInfoPath_{DebugInfo_ ? DebugInfo_->data() : nullptr}
         , Callbacks_{
             .find_elf = dwfl_linux_proc_find_elf,
-            .find_debuginfo = dwfl_standard_find_debuginfo,
+            .find_debuginfo = &FindDebugInfo,
             .debuginfo_path = &DebugInfoPath_,
         }
     {
@@ -144,6 +184,7 @@ public:
         }
         InitializeDwfl();
         FillDwflReport();
+        RegisterDwflModules();
         AttachToProcess();
         ValidateAttachedPid();
     }
@@ -667,9 +708,8 @@ private:
         dwfl_report_begin(Dwfl_);
         if (CustomMaps_) {
             FILE* maps = fopen(CustomMaps_->data(), "r");
-            DEFER {
-                fclose(maps);
-            };
+            DEFER { fclose(maps); };
+
             int code = dwfl_linux_proc_maps_report(Dwfl_, maps);
             CHECK_DWFL(code);
         } else {
@@ -677,6 +717,20 @@ private:
             CHECK_DWFL(code);
         }
         CHECK_DWFL(dwfl_report_end(Dwfl_, nullptr, nullptr));
+    }
+
+    // Fill userdata in each dwfl module.
+    void RegisterDwflModules() {
+        ptrdiff_t offset = 0;
+        do {
+            offset = dwfl_getmodules(Dwfl_, +[](Dwfl_Module* mod, void**, const char* , Dwarf_Addr, void* arg) -> int {
+                void** userdata;
+                dwfl_module_info(mod, &userdata, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+                *userdata = arg;
+                return DWARF_CB_OK;
+            }, this, offset);
+        } while (offset > 0);
+        CHECK_DWFL(offset);
     }
 
     void AttachToProcess() {
@@ -704,6 +758,8 @@ private:
     absl::flat_hash_map<pid_t, std::string> ThreadNameCache_;
     absl::flat_hash_map<size_t, TraceInfo> Traces_;
     absl::flat_hash_map<Dwfl_Module*, std::unique_ptr<ObjectFile>> Modules_;
+
+    RemoteDebugInfo RemoteDebugInfo_;
 };
 
 #undef CHECK_DWFL

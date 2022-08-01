@@ -7,7 +7,10 @@
       "name": "abseil",
       "features": ["cxx17"]
     },
-    "elfutils",
+    {
+      "name": "elfutils",
+      "features": ["libdebuginfod"]
+    },
     "fmt",
     "spdlog",
     "re2"
