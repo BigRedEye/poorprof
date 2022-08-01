@@ -4,6 +4,7 @@
 #include "util/demangle.h"
 #include "util/iterator.h"
 #include "util/literals.h"
+#include "util/log.h"
 
 #include <cpparg/cpparg.h>
 
@@ -11,7 +12,6 @@
 #include <fmt/format.h>
 
 #include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/spdlog.h>
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/inlined_vector.h>
@@ -175,6 +175,7 @@ public:
     }
 
     void DumpTraces() {
+        LOG_INFO("Dumping traces...");
         size_t numHits = 0;
         for (auto&& [_, trace] : Traces_) {
             for (auto&& [tid, count] : trace.HitCount) {
@@ -182,7 +183,7 @@ public:
                 numHits += count;
             }
         }
-        spdlog::info("Dumped {} different stacktraces with {} samples", Traces_.size(), numHits);
+        LOG_INFO("Dumped {} different stacktraces with {} samples", Traces_.size(), numHits);
     }
 
 private:
@@ -212,17 +213,17 @@ private:
 
         if (err == -1) {
             int errn = dwfl_errno();
-            if (strcmp(dwfl_errmsg(errn), "No such process") == 0) {
+            if (auto* msg = dwfl_errmsg(errn); std::string_view{msg}.starts_with("No such process")) {
                 return;
             }
             if (frames.empty()) {
-                spdlog::error("TID {}: Failed to get thread frames: {}", tid, dwfl_errmsg(errn));
+                LOG_ERROR("TID {}: Failed to get thread frames: {}", tid, dwfl_errmsg(errn));
                 return;
             }
         }
 
-        spdlog::debug("Thread {} of process {}", tid, Pid_);
-        spdlog::debug("Found {} frames", frames.size());
+        LOG_DEBUG("Thread {} of process {}", tid, Pid_);
+        LOG_DEBUG("Found {} frames", frames.size());
 
         TraceInfo& trace = Traces_[absl::Hash<FrameList>{}(frames)];
         if (trace.HitCount.empty()) {
@@ -387,7 +388,7 @@ private:
 
                     Dwarf_Word ptr = 0xbebebebe;
                     dwarf_lowpc(&child, &ptr);
-                    spdlog::info("Found call site to {} die at {:x} (DW_AT_low_pc=0x{:x})", name, (uintptr_t)child.addr, (uintptr_t)ptr);
+                    LOG_DEBUG("Found call site to {} die at {:x} (DW_AT_low_pc=0x{:x})", name, (uintptr_t)child.addr, (uintptr_t)ptr);
                 }
                 break;
 
@@ -399,14 +400,14 @@ private:
 
     SymbolList ResolveFrameImpl(Frame frame) {
         if (frame.IsActivation) {
-            spdlog::info("Activation frame at {:x}", frame.InstructionPointer);
+            LOG_DEBUG("Activation frame at {:x}", frame.InstructionPointer);
         }
-        spdlog::debug("Start resolve frame at ip {:x}", frame.InstructionPointer);
+        LOG_DEBUG("Start resolve frame at ip {:x}", frame.InstructionPointer);
 
         Dwarf_Addr ip = frame.InstructionPointerAdjusted();
         Dwfl_Module* module = dwfl_addrmodule(Dwfl_, ip);
         if (!module) {
-            spdlog::debug("No module found for ip {:x}", ip);
+            LOG_DEBUG("No module found for ip {:x}", ip);
             return {{
                 .Frame = frame,
             }};
@@ -415,7 +416,7 @@ private:
         if (!Modules_.contains(module)) {
             ObjectFile obj;
             obj.Name = dwfl_module_info(module, nullptr, &obj.Begin, &obj.End, nullptr, nullptr, &obj.File, nullptr);
-            spdlog::info("Found module {} (@{})", obj.Name, obj.File);
+            LOG_INFO("Found module {} (@{})", obj.Name, obj.File);
             obj.GdbIndex = GdbIndex::Open(module, obj.File);
             Modules_[module] = std::make_unique<ObjectFile>(obj);
         }
@@ -429,7 +430,7 @@ private:
             // Try to find CU DIE using gdb_index.
             cudie = obj->GdbIndex->Lookup(ip, &cudieStorage);
             offset = obj->GdbIndex->DwarfBias();
-            spdlog::info("Lookup in gdb index: {:x}, offset: {}", (uintptr_t)cudie, offset);
+            LOG_DEBUG("Lookup in gdb index: {:x}, offset: {}", (uintptr_t)cudie, offset);
         }
 
         if (!cudie) {
@@ -472,7 +473,7 @@ private:
         }
         if (!cudie) {
             // Give up.
-            spdlog::warn("No CU DIE found for ip {:x}", ip);
+            LOG_WARN("No CU DIE found for ip {:x}", ip);
             const char* symbolName = dwfl_module_addrname(module, ip);
             return {FillSymbol(frame, module, obj, symbolName, nullptr, nullptr, offset)};
         }
@@ -482,7 +483,7 @@ private:
 
         const char* cuName = dwarf_diename(cudie);
         Dwarf_Off dwoffset = dwarf_dieoffset(cudie);
-        spdlog::info("Found CU DIE {:#x} (name: {}, offset: {:#x}) for ip {:#x} with bias {:#x} (addr: {:#x})", (uintptr_t)cudie, cuName, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
+        LOG_TRACE("Found CU DIE {:#x} (name: {}, offset: {:#x}) for ip {:#x} with bias {:#x} (addr: {:#x})", (uintptr_t)cudie, cuName, dwoffset, ip, offset, (uintptr_t)(cudie ? cudie->addr : nullptr));
 
         Dwarf_Die* scopes = nullptr;
         int numScopes = dwarf_getscopes(cudie, ip - offset, &scopes);
@@ -498,12 +499,12 @@ private:
                 if (IsInlinedScope(scope)) {
                     firstSymbolName = TryGetDebugInfoElementLinkageName(scope);
                 } else {
-                    spdlog::info("Non-inlined scope {}", (int)dwarf_tag(scope));
+                    LOG_DEBUG("Non-inlined scope {}", (int)dwarf_tag(scope));
                     VisitDwarf(scope);
                 }
 
                 if (firstSymbolName) {
-                    spdlog::debug("Found by iteration");
+                    LOG_DEBUG("Found by iteration");
                     die = scope;
                     break;
                 }
@@ -513,12 +514,12 @@ private:
         if (firstSymbolName == nullptr) {
             firstSymbolName = dwfl_module_addrname(module, ip);
             if (firstSymbolName) {
-                spdlog::debug("Found by dwfl_module_addrname");
+                LOG_DEBUG("Found by dwfl_module_addrname");
             }
         }
 
         if (firstSymbolName) {
-            spdlog::debug("Found {} scopes for symbol {}", numScopes, util::Demangle(firstSymbolName));
+            LOG_DEBUG("Found {} scopes for symbol {}", numScopes, util::Demangle(firstSymbolName));
         }
 
         SymbolList symbols;
@@ -527,7 +528,7 @@ private:
             Dwarf_Die* scopes = nullptr;
             int numInlinedSymbols = dwarf_getscopes_die(die, &scopes);
             if (numInlinedSymbols == -1) {
-                spdlog::warn("dwarf_getscopes_die failed: {}", dwfl_errmsg(-1));
+                LOG_WARN("dwarf_getscopes_die failed: {}", dwfl_errmsg(-1));
             }
 
             DEFER {
@@ -565,7 +566,7 @@ private:
 
         if (name) {
             sym.Function = util::Demangle(name);
-            spdlog::debug("Start resolve frame {}, inlined: {}, cudie: {}", *sym.Function, inlined, (uintptr_t)cudie);
+            LOG_DEBUG("Start resolve frame {}, inlined: {}, cudie: {}", *sym.Function, inlined, (uintptr_t)cudie);
         }
 
         if (!cudie) {
@@ -605,14 +606,14 @@ private:
                 if (name) {
                     location.File.assign(name, length);
                 } else {
-                    spdlog::info("dwarf_linesrc failed");
+                    LOG_DEBUG("dwarf_linesrc failed");
                 }
                 if (Options_.LineNumbers) {
                     if (dwarf_lineno(line, &location.Line) < 0) {
-                        spdlog::info("dwarf_lineno failed");
+                        LOG_DEBUG("dwarf_lineno failed");
                     }
                     if (dwarf_linecol(line, &location.Column) < 0) {
-                        spdlog::info("dwarf_linecol failed");
+                        LOG_DEBUG("dwarf_linecol failed");
                     }
                 }
             } else if (Dwfl_Line* line = dwfl_module_getsrc(module, ip)) {
@@ -666,7 +667,7 @@ private:
     void InitializeDwfl() {
         Dwfl_ = dwfl_begin(&Callbacks_);
         if (Dwfl_ == nullptr) {
-            spdlog::error("Failed to initialize dwfl");
+            LOG_ERROR("Failed to initialize dwfl");
             throw DwflError{};
         }
     }
@@ -794,11 +795,14 @@ int Main(int argc, const char* argv[]) {
     }
     spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
     spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f {%^%l%$} %v");
+    DEFER {
+        spdlog::shutdown();
+    };
 
     util::HandleSigInt(3);
 
     Options options = ParseOptions(argc, argv);
-    spdlog::info("Going to trace process {}", options.Pid);
+    LOG_INFO("Going to trace process {}", options.Pid);
 
     poorprof::dw::Unwinder unwinder{options};
 
@@ -809,7 +813,7 @@ int Main(int argc, const char* argv[]) {
     size_t max = options.MaxSamples.value_or(std::numeric_limits<size_t>::max());
     for (size_t iter = 1; iter <= max; ++iter) {
         if (util::WasInterrupted()) {
-            spdlog::info("Stopped by SIGINT");
+            LOG_INFO("Stopped by SIGINT");
             break;
         }
 
@@ -822,7 +826,7 @@ int Main(int argc, const char* argv[]) {
         if (now > nextReportTime) {
             nextReportTime = now + options.ReportInterval;
             auto delta = std::chrono::duration_cast<std::chrono::duration<double>>(now - begin).count();
-            spdlog::info("Collected {} traces in {:.3f}s ({:.3f} traces/s)", iter, delta, iter / delta);
+            LOG_INFO("Collected {} traces in {:.3f}s ({:.3f} traces/s)", iter, delta, iter / delta);
         }
 
         std::this_thread::sleep_until(begin + sleep_delta * iter);

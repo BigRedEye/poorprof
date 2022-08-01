@@ -3,6 +3,7 @@
 #include <util/align.h>
 #include <util/assert.h>
 #include <util/error.h>
+#include <util/log.h>
 #include <util/range.h>
 #include <util/types.h>
 
@@ -10,8 +11,6 @@
 #include <elfutils/libdwfl.h>
 #include <gelf.h>
 #include <libelf.h>
-
-#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <bit>
@@ -175,14 +174,14 @@ public:
             });
 
             if (!gdbIndexSection) {
-                spdlog::debug("Object {} does not contain gdb_index", path);
+                LOG_DEBUG("Object {} does not contain gdb_index", path);
                 return std::nullopt;
             }
-            spdlog::info("Found gdb_index for {}", path ? path : "<nil>");
+            LOG_INFO("Found gdb_index for {}", path ? path : "<nil>");
 
             return std::make_optional<GdbIndex>(mod, gdbIndexSection);
         } catch (const std::exception& e) {
-            spdlog::error("Failed to load gdb_index for {}: {}", path, e.what());
+            LOG_ERROR("Failed to load gdb_index for {}: {}", path, e.what());
             return std::nullopt;
         }
     }
@@ -207,12 +206,12 @@ public:
         size_t headerSize = 0;
         int res = dwarf_nextcu(Dwarf_, 0, &nextOffset, &headerSize, nullptr, nullptr, nullptr);
         if (res != 0) {
-            spdlog::error("Malformed .gdb_index: {}", dwarf_errmsg(res));
+            LOG_ERROR("Malformed .gdb_index: {}", dwarf_errmsg(res));
             return nullptr;
         }
 
         Dwarf_Die* cudie = dwarf_offdie(Dwarf_, cu.Offset + headerSize, result);
-        spdlog::debug("Found CU using gdb index, offset: {}, header: {}, total: {}", cu.Offset, headerSize, dwarf_dieoffset(cudie));
+        LOG_DEBUG("Found CU using gdb index, offset: {}, header: {}, total: {}", cu.Offset, headerSize, dwarf_dieoffset(cudie));
         return cudie;
     }
 
@@ -251,7 +250,7 @@ private:
         TriviallyCopyableLoader loader{ptr, ptr + size};
 
         offset_type version = loader.ReadOffset();
-        spdlog::debug("Found gdb index version {}", version);
+        LOG_DEBUG("Found gdb index version {}", version);
         ENSURE(version >= 7, "Unsupported gdb index version");
 
         offset_type cuListOffset = loader.ReadOffset();
@@ -262,7 +261,7 @@ private:
 
         CULocations_ = {begin + cuListOffset, typesCuListOffset - cuListOffset};
         Addresses_ = {begin + addresAreaOffset, symbolTableOffset - addresAreaOffset};
-        spdlog::debug("Found {} CUs, {} address ranges", CULocations_.size(), Addresses_.size());
+        LOG_DEBUG("Found {} CUs, {} address ranges", CULocations_.size(), Addresses_.size());
     }
 
 private:
