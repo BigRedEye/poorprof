@@ -160,11 +160,18 @@ public:
         }
     }
 
-    void Unwind() {
+    [[nodiscard]] bool Unwind() {
+        VisitedThreads_ = 0;
         dwfl_getthreads(Dwfl_, +[](Dwfl_Thread* thread, void* that) -> int {
             static_cast<Unwinder*>(that)->HandleThread(thread);
             return util::WasInterrupted() ? DWARF_CB_ABORT : DWARF_CB_OK;
         }, this);
+
+        if (VisitedThreads_ == 0) {
+            LOG_INFO("No process {} thread found", Pid_);
+            return false;
+        }
+        return true;
     }
 
     void DumpTraces() {
@@ -187,6 +194,7 @@ private:
     };
 
     void HandleThread(Dwfl_Thread* thread) {
+        VisitedThreads_++;
         pid_t tid = dwfl_thread_tid(thread);
         if (ThreadNamesFilter_ && !RE2::PartialMatch(ThreadName(tid), *ThreadNamesFilter_)) {
             return;
@@ -704,6 +712,7 @@ private:
     absl::flat_hash_map<pid_t, std::string> ThreadNameCache_;
     absl::flat_hash_map<size_t, TraceInfo> Traces_;
     absl::flat_hash_map<Dwfl_Module*, std::unique_ptr<ObjectFile>> Modules_;
+    u32 VisitedThreads_ = 0;
 };
 
 #undef CHECK_DWFL
@@ -804,7 +813,10 @@ int Main(int argc, const char* argv[]) {
             break;
         }
 
-        unwinder.Unwind();
+        if (!unwinder.Unwind()) {
+            LOG_INFO("Process exited, stopping");
+            break;
+        }
 
         auto now = std::chrono::steady_clock::now();
         if (now > nextReportTime) {
