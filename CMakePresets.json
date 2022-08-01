@@ -49,6 +49,20 @@
       }
     },
     {
+      "name": "debug-vcpkg-local",
+      "displayName": "Debug vcpkg",
+      "description": "Debug build using deps from local instance of vcpkg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/debug-vcpkg-local",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "/home/sergey/dev/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+        "FORCE_COLORED_OUTPUT": true,
+        "POORPROF_DEPS": "vcpkg"
+      }
+    },
+    {
       "name": "release-system",
       "displayName": "Release system",
       "description": "Release build using deps from system",
@@ -105,6 +119,12 @@
       "configurePreset": "debug-system",
       "displayName": "Debug system",
       "description": "Debug build using deps from system"
+    },
+    {
+      "name": "debug-vcpkg-local",
+      "configurePreset": "debug-vcpkg-local",
+      "displayName": "Debug vcpkg with local installation",
+      "description": "Debug build using deps from vcpkg"
     }
   ]
 }
