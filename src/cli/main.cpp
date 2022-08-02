@@ -787,18 +787,7 @@ Options ParseOptions(int argc, const char* argv[]) {
     return options;
 }
 
-int Main(int argc, const char* argv[]) {
-    if (const char* env = std::getenv("POORPROF_LOG_LEVEL")) {
-        spdlog::set_level(spdlog::level::from_str(env));
-    } else {
-        spdlog::set_level(spdlog::level::info);
-    }
-    spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
-    spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f {%^%l%$} %v");
-    DEFER {
-        spdlog::shutdown();
-    };
-
+int Record(int argc, const char* argv[]) {
     util::HandleSigInt(3);
 
     Options options = ParseOptions(argc, argv);
@@ -835,6 +824,36 @@ int Main(int argc, const char* argv[]) {
     unwinder.DumpTraces();
 
     return 0;
+}
+
+int Main(int argc, const char* argv[]) {
+    if (const char* env = std::getenv("POORPROF_LOG_LEVEL")) {
+        spdlog::set_level(spdlog::level::from_str(env));
+    } else {
+        spdlog::set_level(spdlog::level::info);
+    }
+    spdlog::set_default_logger(spdlog::stderr_color_mt("stderr"));
+    spdlog::set_pattern("%Y-%m-%dT%H:%M:%S.%f {%^%l%$} %v");
+    DEFER {
+        spdlog::shutdown();
+    };
+
+    cpparg::command_parser parser{argv[0]};
+    parser.title("Poorprof -- wall time profiler");
+
+    parser
+        .command("record")
+        .description("Collect stack samples from running process")
+        .handle(Record);
+
+    parser
+        .command("help")
+        .description("Show this help")
+        .handle([&parser](...) {
+            parser.exit_with_help("", 0);
+        });
+
+    return parser.parse(argc, argv);
 }
 
 } // namespace poorprof
